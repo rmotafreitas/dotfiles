@@ -1,0 +1,97 @@
+# Ricardo's dotfiles
+
+My Bash, Zsh, Git and tmux setup, with shared automatic toolchain discovery for Android development and CI. Linux first; tested on Debian and in isolated temporary home directories. Other platforms are not yet verified.
+
+The shell config follows installed NVM/SDKMAN defaults instead of hard-coding version paths. Explicit environment overrides still win, so a CI job can pin Java while interactive shells use another default.
+
+## Install
+
+Requires Git and Python 3.9+. Bash and Zsh are needed for the full test suite.
+
+```sh
+git clone https://github.com/rmotafreitas/dotfiles.git ~/dotfiles
+cd ~/dotfiles
+python3 scripts/install.py          # preview; changes nothing
+python3 scripts/install.py --apply  # back up conflicts, then create symlinks
+```
+
+Open a new terminal afterward. The installer only manages the eight files listed in `scripts/install.py`. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+
+An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
+
+```sh
+git config --file ~/.gitconfig.local user.name 'Your Name'
+git config --file ~/.gitconfig.local user.email 'your-github-noreply-address'
+```
+
+The installer does not install packages, fetch plugins, change your login shell, modify CI projects, or restart services. If you already use `.bash_profile`/`.bash_login` or a custom `ZDOTDIR`, integrate the supplied files into that setup explicitly.
+
+## What's included
+
+| File | Purpose |
+| --- | --- |
+| `.config/shell/toolchain.sh` | Shared toolchain discovery and PATH deduplication |
+| `.config/shell/aliases.sh` | Git, Docker and tmux shortcuts |
+| `.zshenv` | Toolchain environment for Zsh, including SSH commands |
+| `.zshrc` | History, optional plugins, prompt, completions and agent reuse |
+| `.bashrc` / `.profile` | Interactive Bash and login/SSH initialization |
+| `.gitconfig` | Includes private local identity and credentials |
+| `.tmux.conf` | Ctrl-a prefix, mouse, splits, scrollback and optional TPM plugins |
+
+### Automatic environment
+
+- **Node/npm/npx:** NVM's default, or a valid runtime inherited from the parent shell. Supports NVM in `~/.config/nvm` or `~/.nvm`.
+- **Java, Gradle, Maven, Ant:** SDKMAN's selected `current` versions. Explicit `*_HOME` overrides are preserved and their executable paths take precedence.
+- **Android:** explicit `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then common SDK locations. The legacy variable mirrors `ANDROID_HOME` for compatibility.
+- **Bun/Rust:** their installation homes; directories are added only when present.
+- **PATH:** repeated entries are removed, retaining the first occurrence.
+
+“Automatic” means selecting installed tools. Startup never downloads or upgrades them and does not switch versions on every directory change. Use `nvm use` / `nvm alias default` and `sdk use` / `sdk default` to select versions. Plain noninteractive `bash -c` inherits its environment; it does not ordinarily read `.bashrc`.
+
+### Optional tools
+
+The setup works without these. Install only what you use through their official instructions:
+
+- [Oh My Zsh](https://ohmyz.sh/) and optionally `zsh-autosuggestions` / `zsh-syntax-highlighting` in its custom plugins directory.
+- [Starship](https://starship.rs/) for the prompt; a basic prompt is used otherwise.
+- [NVM](https://github.com/nvm-sh/nvm), [SDKMAN](https://sdkman.io/), [Bun](https://bun.sh/), [Rustup](https://rustup.rs/), and the [Android SDK](https://developer.android.com/tools).
+- [fzf](https://github.com/junegunn/fzf) for completion/key bindings on Debian-style installations.
+- [TPM](https://github.com/tmux-plugins/tpm) at `~/.tmux/plugins/tpm` for the configured tmux plugins. Use prefix + I after installing TPM.
+
+Zsh reuses an existing SSH session agent when available. It does not spawn extra agents or load private keys at startup.
+
+## Private and machine-specific settings
+
+These files live **outside this repository**:
+
+- `~/.config/shell/local.sh` — environment overrides loaded before toolchain discovery; use Bash/Zsh-compatible syntax.
+- `~/.bashrc.local` and `~/.zshrc.local` — interactive customizations loaded last.
+- `~/.gitconfig.local` — Git identity and credential helpers.
+
+Example `~/.config/shell/local.sh`:
+
+```sh
+export ANDROID_HOME="$HOME/Android/Sdk"
+# Optionally select a different manager directory or pin a toolchain here.
+```
+
+Never commit keys, tokens, credential stores, history, app state or local override files. The repository contains a curated allowlist of configuration, not a copy of the home directory.
+
+## Update, validate and undo
+
+```sh
+cd ~/dotfiles
+git pull --ff-only
+python3 scripts/install.py
+python3 -m unittest discover -s tests -v
+```
+
+Symlinked files reflect edits immediately; shell initialization changes take effect in a new shell. Review updates before reloading. To restore an old file, remove only its installed symlink and move the matching file from the printed backup directory back to its original location. Local overrides are not removed by the installer.
+
+GitHub Actions checks shell syntax and tests preview behavior, backups, repeat installation, destination boundaries and shell startup without optional tools.
+
+## References
+
+The layout uses the symlink approach seen in [Holman's dotfiles](https://github.com/holman/dotfiles), with private overrides inspired by [thoughtbot's dotfiles](https://github.com/thoughtbot/dotfiles). [chezmoi](https://www.chezmoi.io/user-guide/setup/) was also reviewed; this setup stays small enough to use a standard-library installer without another manager.
+
+MIT licensed. Review and adapt the configuration before installing it on another machine.

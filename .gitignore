@@ -1,0 +1,18 @@
+# Never add private overrides, credentials, histories or generated state.
+*.local
+home/.config/shell/local.sh
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+.ssh/
+.aws/
+.config/gh/
+*_history
+__pycache__/
+*.pyc
+.DS_Store

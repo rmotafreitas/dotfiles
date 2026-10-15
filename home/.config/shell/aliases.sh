@@ -1,0 +1,8 @@
+alias ll='ls -lah'
+alias gs='git status'
+alias gp='git pull'
+alias gc='git commit'
+alias dc='docker compose'
+alias dps='docker ps'
+alias tma='tmux attach -t'
+alias tml='tmux ls'

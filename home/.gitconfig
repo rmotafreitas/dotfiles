@@ -1,0 +1,3 @@
+# Identity and credential helpers belong in this private, untracked file.
+[include]
+    path = ~/.gitconfig.local

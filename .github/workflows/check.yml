@@ -1,0 +1,17 @@
+name: Check dotfiles
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Check shell syntax
+        run: |
+          bash -n home/.bashrc home/.profile home/.config/shell/toolchain.sh home/.config/shell/aliases.sh
+          zsh -n home/.zshenv home/.zshrc home/.config/shell/toolchain.sh
+      - name: Test installer and shell startup
+        run: python3 -m unittest discover -s tests -v
