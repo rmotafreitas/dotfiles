@@ -78,6 +78,57 @@ class DotfilesTests(unittest.TestCase):
         command = '. "$HOME/.config/shell/toolchain.sh"; before=$PATH; . "$HOME/.config/shell/toolchain.sh"; test "$before" = "$PATH"'
         subprocess.run(['bash', '-c', command], env=env, check=True)
 
+    def shell_env(self, **extra):
+        return {'HOME': str(self.home), 'PATH': '/usr/bin:/bin', 'TERM': 'dumb', **extra}
+
+    def test_macos_files_are_linked_only_on_macos(self):
+        self.install('--apply', '--platform', 'linux')
+        self.assertFalse((self.home / '.zprofile').exists())
+        self.assertFalse((self.home / '.config/shell/macos.sh').exists())
+        self.install('--apply', '--platform', 'darwin')
+        for name in ['.zprofile', '.bash_profile', '.p10k.zsh', '.config/shell/macos.sh',
+                     '.config/zsh/macos-pre.zsh', '.config/zsh/macos.zsh',
+                     'Library/Application Support/com.mitchellh.ghostty/config.ghostty']:
+            self.assertTrue((self.home / name).is_symlink() and (self.home / name).resolve().is_file(), name)
+        self.assertFalse((self.home / '.local/state/dotfiles/backups').exists())
+
+    def test_macos_shells_start_without_optional_tools(self):
+        self.install('--apply', '--platform', 'darwin')
+        for shell in ['bash', 'zsh']:
+            if not shutil.which(shell):
+                self.skipTest(f'{shell} is not installed')
+            for flags in ['-c', '-ic', '-lic']:
+                subprocess.run([shell, flags, 'exit 0'], env=self.shell_env(), check=True, capture_output=True)
+
+    def test_zprofile_restores_toolchain_precedence_after_path_rewrite(self):
+        if not shutil.which('zsh'):
+            self.skipTest('zsh is not installed')
+        self.install('--apply', '--platform', 'darwin')
+        java = self.home / 'custom-jdk'
+        (java / 'bin').mkdir(parents=True)
+        (java / 'bin/java').write_text('#!/bin/sh\nexit 0\n')
+        (java / 'bin/java').chmod(0o755)
+        # path_helper puts system directories first; .zprofile must undo that.
+        command = ('. "$HOME/.config/shell/toolchain.sh"; PATH="/usr/bin:/bin:$PATH"; '
+                   '. "$HOME/.zprofile"; test "$JAVA_HOME/bin/java" = "$(command -v java)" && '
+                   'test "$(printf %s "$PATH" | tr : "\\n" | sort | uniq -d)" = ""')
+        subprocess.run(['zsh', '-c', command], env=self.shell_env(JAVA_HOME=str(java)), check=True, capture_output=True)
+
+    def test_macos_zsh_prelude_selects_installed_theme_and_plugins(self):
+        if not shutil.which('zsh'):
+            self.skipTest('zsh is not installed')
+        self.install('--apply', '--platform', 'darwin')
+        probe = '. "$HOME/.config/zsh/macos-pre.zsh"; print -r -- "[$DOTFILES_ZSH_THEME][$dotfiles_plugins]"'
+        run = lambda: subprocess.run(['zsh', '-c', probe], env=self.shell_env(), check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(run(), '[][]')
+        omz = self.home / '.oh-my-zsh'
+        (omz / 'custom/themes/powerlevel10k').mkdir(parents=True)
+        (omz / 'custom/themes/powerlevel10k/powerlevel10k.zsh-theme').write_text('')
+        (omz / 'plugins/macos').mkdir(parents=True)
+        self.assertEqual(run(), '[powerlevel10k/powerlevel10k][macos]')
+        # The shared .zshrc starts with the theme and plugins selected.
+        subprocess.run(['zsh', '-ic', 'exit 0'], env=self.shell_env(), check=True, capture_output=True)
+
 
 if __name__ == '__main__':
     unittest.main()

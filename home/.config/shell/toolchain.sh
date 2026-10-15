@@ -7,6 +7,8 @@ _USER_TOOLCHAIN_READY=1
 
 # Private machine overrides are loaded before automatic discovery.
 [ ! -r "$HOME/.config/shell/local.sh" ] || . "$HOME/.config/shell/local.sh"
+# Platform additions (for example Homebrew on macOS) exist only where installed.
+[ ! -r "$HOME/.config/shell/macos.sh" ] || . "$HOME/.config/shell/macos.sh"
 
 # Respect custom manager locations; otherwise discover the existing installation.
 if [ -z "${NVM_DIR:-}" ]; then
@@ -23,12 +25,17 @@ export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 
 # NVM owns Node/npm/npx selection. Preserve an explicitly selected parent runtime.
-if [ -s "$NVM_DIR/nvm.sh" ]; then
+# Homebrew installs nvm.sh outside NVM_DIR, which still holds the Node versions.
+_tc_nvm=$NVM_DIR/nvm.sh
+if [ ! -s "$_tc_nvm" ] && [ -n "${HOMEBREW_PREFIX:-}" ]; then
+    _tc_nvm=$HOMEBREW_PREFIX/opt/nvm/nvm.sh
+fi
+if [ -s "$_tc_nvm" ]; then
     if [ -n "${NVM_BIN:-}" ] && [ -x "$NVM_BIN/node" ] &&
        [ "$(command -v node)" = "$NVM_BIN/node" ]; then
-        . "$NVM_DIR/nvm.sh" --no-use
+        . "$_tc_nvm" --no-use
     else
-        . "$NVM_DIR/nvm.sh"
+        . "$_tc_nvm"
     fi
 fi
 
@@ -90,4 +97,6 @@ while :; do
     case $_tc_rest in *:*) _tc_rest=${_tc_rest#*:} ;; *) break ;; esac
 done
 export PATH=$_tc_path
-unset _tc_java _tc_gradle _tc_maven _tc_ant _tc_sdk _tc_dir _tc_rest _tc_path _tc_first _tc_item
+# Remembered so a login shell can restore precedence after the system's PATH rewrite (see .zprofile).
+_DOTFILES_PATH=$_tc_path
+unset _tc_nvm _tc_java _tc_gradle _tc_maven _tc_ant _tc_sdk _tc_dir _tc_rest _tc_path _tc_first _tc_item
