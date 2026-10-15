@@ -129,6 +129,20 @@ class DotfilesTests(unittest.TestCase):
         # The shared .zshrc starts with the theme and plugins selected.
         subprocess.run(['zsh', '-ic', 'exit 0'], env=self.shell_env(), check=True, capture_output=True)
 
+    def test_sdkman_is_skipped_on_bash_older_than_4(self):
+        self.install('--apply')
+        init = self.home / '.sdkman/bin/sdkman-init.sh'
+        init.parent.mkdir(parents=True)
+        init.write_text('touch "$HOME/sdkman-loaded"\n')
+        loaded = self.home / 'sdkman-loaded'
+        run = lambda version: subprocess.run(
+            ['bash', '-c', f'BASH_VERSION="{version}"; . "$HOME/.config/shell/toolchain.sh"'],
+            env=self.shell_env(), check=True, capture_output=True)
+        run('3.2.57(1)-release')
+        self.assertFalse(loaded.exists())
+        run('5.3.15(1)-release')
+        self.assertTrue(loaded.exists())
+
 
 if __name__ == '__main__':
     unittest.main()
