@@ -36,6 +36,22 @@ class DotfilesTests(unittest.TestCase):
         self.install('--apply')
         self.assertEqual(list((self.home / '.local/state/dotfiles/backups').iterdir()), backups)
 
+    def test_optional_wallpapers_preserve_other_pictures(self):
+        pictures = self.home / 'Pictures'
+        pictures.mkdir()
+        (pictures / 'personal.txt').write_text('keep')
+        self.install('--apply')
+        self.assertFalse((pictures / 'Wallpapers').exists())
+        self.install('--wallpapers')
+        self.assertFalse((pictures / 'Wallpapers').exists())
+        self.install('--apply', '--wallpapers')
+        links = list((pictures / 'Wallpapers').iterdir())
+        self.assertEqual(len(links), 3)
+        self.assertTrue(all(p.is_symlink() and p.resolve().is_file() for p in links))
+        self.assertEqual((pictures / 'personal.txt').read_text(), 'keep')
+        self.install('--apply', '--wallpapers')
+        self.assertFalse((self.home / '.local/state/dotfiles/backups').exists())
+
     def test_external_parent_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as outside:
             (self.home / '.config').symlink_to(outside)

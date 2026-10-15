@@ -15,7 +15,7 @@ python3 scripts/install.py          # preview; changes nothing
 python3 scripts/install.py --apply  # back up conflicts, then create symlinks
 ```
 
-Open a new terminal afterward. The installer only manages the eight files listed in `scripts/install.py`. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+Open a new terminal afterward. The installer manages the eight configuration files listed in `scripts/install.py`; `--wallpapers` also installs the three wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
 
 An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
 
@@ -60,6 +60,17 @@ The setup works without these. Install only what you use through their official 
 
 Zsh reuses an existing SSH session agent when available. It does not spawn extra agents or load private keys at startup.
 
+## Wallpapers
+
+The [wallpapers/](wallpapers/) folder preserves my three original wallpaper files, including the images used by my XFCE desktop. Images are stored directly in Git (about 24 MiB total), so a normal clone includes them.
+
+```sh
+python3 scripts/install.py --wallpapers          # preview config + wallpaper links
+python3 scripts/install.py --apply --wallpapers  # link into ~/Pictures/Wallpapers
+```
+
+Existing pictures are preserved. In XFCE, open **Desktop Settings → Background**, choose `~/Pictures/Wallpapers`, then select an image for each monitor/workspace. The installer does not change the current wallpaper or import monitor-specific XFCE settings. See the [gallery and asset notes](wallpapers/README.md).
+
 ## Private and machine-specific settings
 
 These files live **outside this repository**:
@@ -94,4 +105,4 @@ GitHub Actions checks shell syntax and tests preview behavior, backups, repeat i
 
 The layout uses the symlink approach seen in [Holman's dotfiles](https://github.com/holman/dotfiles), with private overrides inspired by [thoughtbot's dotfiles](https://github.com/thoughtbot/dotfiles). [chezmoi](https://www.chezmoi.io/user-guide/setup/) was also reviewed; this setup stays small enough to use a standard-library installer without another manager.
 
-MIT licensed. Review and adapt the configuration before installing it on another machine.
+Configuration and scripts are MIT licensed; wallpaper artwork is excluded (see [asset notes](wallpapers/README.md)). Review and adapt the configuration before installing it on another machine.

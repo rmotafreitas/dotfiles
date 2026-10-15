@@ -10,12 +10,17 @@ FILES = ('.bashrc', '.profile', '.zshenv', '.zshrc', '.gitconfig', '.tmux.conf',
          '.config/shell/toolchain.sh', '.config/shell/aliases.sh')
 
 
-def install(home: Path, apply: bool) -> None:
+WALLPAPERS = ('02rz3dw29c2h1_upscaled.jpeg', 'wallhaven-9o927x_3840x2160.png',
+              'wallhaven-qrgqyq_3840x2160.png')
+
+
+def install(home: Path, apply: bool, wallpapers: bool = False) -> None:
     home = home.expanduser().absolute()
     backup = home / '.local/state/dotfiles/backups' / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
-    for name in FILES:
-        relative = Path(name)
-        source = ROOT / 'home' / relative
+    entries = [(ROOT / 'home' / name, Path(name)) for name in FILES]
+    if wallpapers:
+        entries += [(ROOT / 'wallpapers' / name, Path('Pictures/Wallpapers') / name) for name in WALLPAPERS]
+    for source, relative in entries:
         target = home / relative
         if target.is_symlink() and target.resolve() == source:
             print(f'Already linked: {relative}')
@@ -49,5 +54,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true', help='apply the previewed symlinks')
     parser.add_argument('--home', type=Path, default=Path.home(), help='alternate home for testing')
+    parser.add_argument('--wallpapers', action='store_true', help='also link the wallpaper collection into Pictures/Wallpapers')
     args = parser.parse_args()
-    install(args.home, args.apply)
+    install(args.home, args.apply, args.wallpapers)
