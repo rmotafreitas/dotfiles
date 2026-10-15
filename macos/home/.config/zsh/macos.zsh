@@ -12,6 +12,10 @@ if (( $+commands[pyenv] )); then
     (( ! $+commands[pyenv-virtualenv-init] )) || eval "$(pyenv virtualenv-init -)"
 fi
 
+# nvm completion from Homebrew's nvm.
+[[ -z ${HOMEBREW_PREFIX-} || ! -s $HOMEBREW_PREFIX/opt/nvm/etc/bash_completion.d/nvm ]] ||
+    source "$HOMEBREW_PREFIX/opt/nvm/etc/bash_completion.d/nvm"
+
 # Show system info once, before the first prompt.
 _fastfetch_once() {
     (( $+commands[fastfetch] )) && fastfetch
