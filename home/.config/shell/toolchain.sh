@@ -44,7 +44,9 @@ _tc_java=${JAVA_HOME:-}
 _tc_gradle=${GRADLE_HOME:-}
 _tc_maven=${MAVEN_HOME:-}
 _tc_ant=${ANT_HOME:-}
-if [ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]; then
+# SDKMAN needs Bash 4+; macOS's /bin/bash is 3.2 and would print "bad substitution".
+if [ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] &&
+   { [ -z "${BASH_VERSION:-}" ] || [ "${BASH_VERSION%%.*}" -ge 4 ]; }; then
     . "$SDKMAN_DIR/bin/sdkman-init.sh"
 fi
 [ -z "$_tc_java" ] || export JAVA_HOME="$_tc_java"
