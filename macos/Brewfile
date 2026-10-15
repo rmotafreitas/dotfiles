@@ -1,0 +1,71 @@
+# Homebrew packages for macOS: brew bundle --file=macos/Brewfile
+# Generated from `brew bundle dump`; npm globals are left out. Ghostty itself is installed from ghostty.org.
+tap "anomalyco/tap"
+tap "oven-sh/bun", trusted: true
+# Run your GitHub Actions locally
+brew "act"
+# Shell extension to jump to frequently used directories
+brew "autojump"
+# Bourne-Again SHell, a UNIX command interpreter
+brew "bash"
+# Dependency manager for Cocoa projects
+brew "cocoapods"
+# Programming language for highly scalable real-time systems
+brew "erlang"
+# Perl lib for reading and writing EXIF metadata
+brew "exiftool"
+# Like neofetch, but much faster because written mostly in C
+brew "fastfetch"
+# Easiest way to build and release mobile apps
+brew "fastlane"
+# Play, record, convert, and stream select audio and video codecs
+brew "ffmpeg"
+# Command-line fuzzy finder written in Go
+brew "fzf"
+# GitHub command-line tool
+brew "gh"
+# Graph visualization software from AT&T and Bell Labs
+brew "graphviz"
+# Tools and libraries to manipulate images in select formats
+brew "imagemagick"
+# Simple tool to make locally trusted development certificates
+brew "mkcert"
+# Deep clean and optimize your Mac
+brew "mole"
+# Media player based on MPlayer and mplayer2
+brew "mpv"
+# Open source relational database management system
+brew "mysql-client"
+# Libraries for security-enabled client and server applications
+brew "nss"
+# Manage multiple Node.js versions
+brew "nvm"
+# Draw UML diagrams
+brew "plantuml"
+# PDF rendering library (based on the xpdf-3.0 code base)
+brew "poppler"
+# Python version management
+brew "pyenv"
+# Pyenv plugin to manage virtualenv
+brew "pyenv-virtualenv"
+# Classic 2D jump'n run sidescroller game
+brew "supertux"
+# Modernized, complete, self-contained TeX/LaTeX engine
+brew "tectonic"
+# Display directories as trees (with optional color/HTML output)
+brew "tree"
+# Command-line tool to install and switch between multiple versions of Xcode
+brew "xcodes"
+# The AI coding agent built for the terminal.
+brew "anomalyco/tap/opencode", trusted: true
+# Incredibly fast JavaScript runtime, bundler, transpiler and package manager - all in one.
+brew "oven-sh/bun/bun"
+# Terminal-based AI coding assistant
+cask "claude-code"
+# OpenAI's coding agent that runs in your terminal
+cask "codex"
+cask "font-meslo-lg-nerd-font"
+# Tool to prevent the system from going into sleep mode
+cask "keepingyouawake"
+# AI coding agent desktop client
+cask "opencode-desktop"

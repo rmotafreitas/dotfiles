@@ -1,6 +1,6 @@
 # Ricardo's dotfiles
 
-My Bash, Zsh, Git and tmux setup, with shared automatic toolchain discovery for Android development and CI. Linux first; tested on Debian and in isolated temporary home directories. Other platforms are not yet verified.
+My Bash, Zsh, Git and tmux setup, with shared automatic toolchain discovery for Android development and CI. Linux first, tested on Debian and in isolated temporary home directories. A macOS layer (Homebrew, Powerlevel10k, Ghostty) is installed only on macOS and checked in CI on a macOS runner.
 
 The shell config follows installed NVM/SDKMAN defaults instead of hard-coding version paths. Explicit environment overrides still win, so a CI job can pin Java while interactive shells use another default.
 
@@ -15,7 +15,7 @@ python3 scripts/install.py          # preview; changes nothing
 python3 scripts/install.py --apply  # back up conflicts, then create symlinks
 ```
 
-Open a new terminal afterward. The installer manages the eight configuration files listed in `scripts/install.py`; `--wallpapers` also installs the three wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the three wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
 
 An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
 
@@ -37,6 +37,7 @@ The installer does not install packages, fetch plugins, change your login shell,
 | `.bashrc` / `.profile` | Interactive Bash and login/SSH initialization |
 | `.gitconfig` | Includes private local identity and credentials |
 | `.tmux.conf` | Ctrl-a prefix, mouse, splits, scrollback and optional TPM plugins |
+| `macos/` | Optional macOS layer, described below |
 
 ### Automatic environment
 
@@ -59,6 +60,24 @@ The setup works without these. Install only what you use through their official 
 - [TPM](https://github.com/tmux-plugins/tpm) at `~/.tmux/plugins/tpm` for the configured tmux plugins. Use prefix + I after installing TPM.
 
 Zsh reuses an existing SSH session agent when available. It does not spawn extra agents or load private keys at startup.
+
+## macOS
+
+On macOS the installer also links the files in [macos/](macos/), and Linux machines never see them:
+
+| File | Purpose |
+| --- | --- |
+| `.config/shell/macos.sh` | Homebrew, pyenv and extra `PATH` entries; Bash completion and fzf for interactive Bash |
+| `.config/zsh/macos-pre.zsh` | Powerlevel10k instant prompt, Docker completions and the extra Oh My Zsh plugins; skipped when not installed |
+| `.config/zsh/macos.zsh` | p10k config, fzf, pyenv integration, fastfetch on the first prompt and the `bag` helper |
+| `.zprofile` | Restores the toolchain `PATH` after macOS's `path_helper` has moved system directories to the front |
+| `.bash_profile` | macOS login shells read this instead of `.profile` |
+| `.p10k.zsh` | Powerlevel10k prompt configuration |
+| Ghostty `config.ghostty` | Linked to `~/Library/Application Support/com.mitchellh.ghostty/` |
+
+With Oh My Zsh and Powerlevel10k installed the prompt comes from p10k, otherwise from Starship or the basic prompt. Install the packages with `brew bundle --file=macos/Brewfile` (it includes the MesloLGS Nerd Font that the prompt and Ghostty use). `sh macos/defaults.sh` previews a few Finder, keyboard and screenshot preferences and `--apply` sets them; each can be undone with `defaults delete`.
+
+Keep secrets such as API keys in `~/.zshrc.local` or `~/.config/shell/local.sh`, not in the repository. Put `[credential] helper = osxkeychain` in `~/.gitconfig.local`.
 
 ## Wallpapers
 

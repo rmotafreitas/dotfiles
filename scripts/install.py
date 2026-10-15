@@ -4,20 +4,31 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ('.bashrc', '.profile', '.zshenv', '.zshrc', '.gitconfig', '.tmux.conf',
          '.config/shell/toolchain.sh', '.config/shell/aliases.sh')
-
+# (source under macos/, target relative to home); linked only on macOS.
+MACOS_FILES = (('home/.bash_profile', '.bash_profile'), ('home/.zprofile', '.zprofile'),
+               ('home/.p10k.zsh', '.p10k.zsh'),
+               ('home/.config/shell/macos.sh', '.config/shell/macos.sh'),
+               ('home/.config/zsh/macos-pre.zsh', '.config/zsh/macos-pre.zsh'),
+               ('home/.config/zsh/macos.zsh', '.config/zsh/macos.zsh'),
+               ('ghostty/config.ghostty', 'Library/Application Support/com.mitchellh.ghostty/config.ghostty'))
 
 WALLPAPERS = ('02rz3dw29c2h1_upscaled.jpeg', 'wallhaven-9o927x_3840x2160.png',
               'wallhaven-qrgqyq_3840x2160.png')
 
 
-def install(home: Path, apply: bool, wallpapers: bool = False) -> None:
+def install(home: Path, apply: bool, wallpapers: bool = False, platform: str = 'auto') -> None:
     home = home.expanduser().absolute()
     backup = home / '.local/state/dotfiles/backups' / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     entries = [(ROOT / 'home' / name, Path(name)) for name in FILES]
+    if platform == 'auto':
+        platform = 'darwin' if sys.platform == 'darwin' else 'linux'
+    if platform == 'darwin':
+        entries += [(ROOT / 'macos' / source, Path(target)) for source, target in MACOS_FILES]
     if wallpapers:
         entries += [(ROOT / 'wallpapers' / name, Path('Pictures/Wallpapers') / name) for name in WALLPAPERS]
     for source, relative in entries:
@@ -55,5 +66,6 @@ if __name__ == '__main__':
     parser.add_argument('--apply', action='store_true', help='apply the previewed symlinks')
     parser.add_argument('--home', type=Path, default=Path.home(), help='alternate home for testing')
     parser.add_argument('--wallpapers', action='store_true', help='also link the wallpaper collection into Pictures/Wallpapers')
+    parser.add_argument('--platform', choices=('auto', 'linux', 'darwin'), default='auto', help='link macOS files too (default: detect)')
     args = parser.parse_args()
-    install(args.home, args.apply, args.wallpapers)
+    install(args.home, args.apply, args.wallpapers, args.platform)
