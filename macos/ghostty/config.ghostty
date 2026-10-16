@@ -8,3 +8,6 @@ window-decoration = auto
 macos-window-buttons = visible
 cursor-style = block
 shell-integration = zsh
+# Over SSH, install Ghostty's terminfo on the server and fall back to xterm-256color if that
+# fails. Without this the server does not know TERM=xterm-ghostty and zsh garbles typing.
+shell-integration-features = ssh-env,ssh-terminfo
