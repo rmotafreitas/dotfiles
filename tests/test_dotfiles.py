@@ -164,6 +164,18 @@ class DotfilesTests(unittest.TestCase):
             self.assertEqual(term('xterm-ghostty'), 'xterm-256color')
             self.assertEqual(term('screen-256color'), 'screen-256color')
 
+    def test_startup_fastfetch_keeps_colors_during_the_instant_prompt(self):
+        if not shutil.which('zsh'):
+            self.skipTest('zsh is not installed')
+        self.install('--apply', '--platform', 'darwin')
+        fake = self.home / 'bin/fastfetch'
+        fake.parent.mkdir()
+        fake.write_text('#!/bin/sh\necho "$@" > "$HOME/fastfetch-args"\n')
+        fake.chmod(0o755)
+        subprocess.run(['zsh', '-ic', '_fastfetch_once'], env=self.shell_env(), check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        # stdout is not a terminal here, like during the instant prompt; colors must be forced.
+        self.assertEqual((self.home / 'fastfetch-args').read_text().strip(), '--pipe false')
+
 
 if __name__ == '__main__':
     unittest.main()
