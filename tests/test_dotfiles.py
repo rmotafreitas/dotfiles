@@ -137,11 +137,32 @@ class DotfilesTests(unittest.TestCase):
         loaded = self.home / 'sdkman-loaded'
         run = lambda version: subprocess.run(
             ['bash', '-c', f'BASH_VERSION="{version}"; . "$HOME/.config/shell/toolchain.sh"'],
-            env=self.shell_env(), check=True, capture_output=True)
+            env=self.shell_env(), check=True, capture_output=True, stdin=subprocess.DEVNULL)
         run('3.2.57(1)-release')
         self.assertFalse(loaded.exists())
         run('5.3.15(1)-release')
         self.assertTrue(loaded.exists())
+
+    def test_bash_has_colors_unless_no_color_is_set(self):
+        self.install('--apply')
+        probe = 'echo "$CLICOLOR"; type -t ls; echo "$PS1"'
+        run = lambda **extra: subprocess.run(['bash', '-ic', probe], env=self.shell_env(**extra), check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+        colored = run()
+        self.assertIn('1\nalias\n', colored)
+        self.assertIn('\\e[32m', colored)
+        plain = run(NO_COLOR='1')
+        self.assertNotIn('alias', plain.split('\n')[1])
+        self.assertNotIn('\\e[', plain)
+
+    def test_unknown_ghostty_terminal_falls_back_to_xterm_256color(self):
+        self.install('--apply')
+        for shell in ['bash', 'zsh']:
+            if not shutil.which(shell):
+                self.skipTest(f'{shell} is not installed')
+            term = lambda value: subprocess.run([shell, '-c', '. "$HOME/.config/shell/toolchain.sh"; echo "$TERM"'],
+                                                env=self.shell_env(TERM=value), check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.strip()
+            self.assertEqual(term('xterm-ghostty'), 'xterm-256color')
+            self.assertEqual(term('screen-256color'), 'screen-256color')
 
 
 if __name__ == '__main__':
