@@ -5,6 +5,12 @@ if [ "${_USER_TOOLCHAIN_READY:-}" = 1 ]; then
 fi
 _USER_TOOLCHAIN_READY=1
 
+# Ghostty's TERM only works while its TERMINFO is set; sudo, ssh and env drop it, and
+# without a terminfo entry programs turn colors off. Fall back to a universal name.
+if [ "${TERM:-}" = xterm-ghostty ] && ! infocmp xterm-ghostty >/dev/null 2>&1; then
+    export TERM=xterm-256color
+fi
+
 # Private machine overrides are loaded before automatic discovery.
 [ ! -r "$HOME/.config/shell/local.sh" ] || . "$HOME/.config/shell/local.sh"
 # Platform additions (for example Homebrew on macOS) exist only where installed.
