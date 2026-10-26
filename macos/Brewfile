@@ -52,12 +52,16 @@ brew "pyenv-virtualenv"
 brew "supertux"
 # Modernized, complete, self-contained TeX/LaTeX engine
 brew "tectonic"
+# Command-line unarchiving tools supporting multiple formats
+brew "unar"
 # Display directories as trees (with optional color/HTML output)
 brew "tree"
 # Command-line tool to install and switch between multiple versions of Xcode
 brew "xcodes"
 # The AI coding agent built for the terminal.
 brew "anomalyco/tap/opencode", trusted: true
+# OpenCode V2 - the AI coding agent for the terminal
+brew "anomalyco/tap/opencode-v2", trusted: true
 # Incredibly fast JavaScript runtime, bundler, transpiler and package manager - all in one.
 brew "oven-sh/bun/bun"
 # Terminal-based AI coding assistant
@@ -67,5 +71,7 @@ cask "codex"
 cask "font-meslo-lg-nerd-font"
 # Tool to prevent the system from going into sleep mode
 cask "keepingyouawake"
+# File archiver
+cask "keka"
 # AI coding agent desktop client
 cask "opencode-desktop"

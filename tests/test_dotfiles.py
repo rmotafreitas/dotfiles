@@ -46,7 +46,7 @@ class DotfilesTests(unittest.TestCase):
         self.assertFalse((pictures / 'Wallpapers').exists())
         self.install('--apply', '--wallpapers')
         links = list((pictures / 'Wallpapers').iterdir())
-        self.assertEqual(len(links), 3)
+        self.assertEqual(len(links), 4)
         self.assertTrue(all(p.is_symlink() and p.resolve().is_file() for p in links))
         self.assertEqual((pictures / 'personal.txt').read_text(), 'keep')
         self.install('--apply', '--wallpapers')

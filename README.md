@@ -15,7 +15,7 @@ python3 scripts/install.py          # preview; changes nothing
 python3 scripts/install.py --apply  # back up conflicts, then create symlinks
 ```
 
-Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the three wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
 
 An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
 
@@ -81,7 +81,7 @@ Keep secrets such as API keys in `~/.zshrc.local` or `~/.config/shell/local.sh`,
 
 ## Wallpapers
 
-The [wallpapers/](wallpapers/) folder preserves my three original wallpaper files, including the images used by my XFCE desktop. Images are stored directly in Git (about 24 MiB total), so a normal clone includes them.
+The [wallpapers/](wallpapers/) folder preserves my four original wallpaper files, including the images used by my XFCE desktop and Mac. Images are stored directly in Git (about 90 MiB total), so a normal clone includes them.
 
 ```sh
 python3 scripts/install.py --wallpapers          # preview config + wallpaper links

@@ -17,7 +17,7 @@ MACOS_FILES = (('home/.bash_profile', '.bash_profile'), ('home/.zprofile', '.zpr
                ('home/.config/zsh/macos.zsh', '.config/zsh/macos.zsh'),
                ('ghostty/config.ghostty', 'Library/Application Support/com.mitchellh.ghostty/config.ghostty'))
 
-WALLPAPERS = ('02rz3dw29c2h1_upscaled.jpeg', 'wallhaven-9o927x_3840x2160.png',
+WALLPAPERS = ('02rz3dw29c2h1_upscaled.jpeg', 'nicerocket.png', 'wallhaven-9o927x_3840x2160.png',
               'wallhaven-qrgqyq_3840x2160.png')
 
 
