@@ -182,6 +182,18 @@ class DotfilesTests(unittest.TestCase):
         self.assertEqual((ROOT / 'vscode/ricardo.code-profile').read_text(), vscode_profile.build(),
                          'run python3 scripts/vscode_profile.py')
 
+    def test_keyboard_layouts_are_regenerated(self):
+        kb = ROOT / 'keyboard'
+        klc = kb / 'windows/tmfkeyboard.klc'
+        with tempfile.TemporaryDirectory() as out:
+            out = Path(out)
+            for args in (['klc2keylayout.py', klc, out / 'tmf.keylayout', 'TMF Keyboard'], ['klc2xkb.py', klc, out]):
+                subprocess.run([sys.executable, '-I', str(kb / 'tools' / args[0]), *map(str, args[1:])], check=True, capture_output=True)
+            for generated, committed in ((out / 'tmf.keylayout', kb / 'macos/tmfkeyboard.keylayout'),
+                                         (out / 'symbols/tmf', kb / 'linux/symbols/tmf'),
+                                         (out / 'rules/evdev.xml', kb / 'linux/rules/evdev.xml')):
+                self.assertEqual(generated.read_bytes(), committed.read_bytes(), committed)
+
 
 if __name__ == '__main__':
     unittest.main()

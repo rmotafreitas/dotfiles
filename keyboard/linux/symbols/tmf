@@ -1,0 +1,58 @@
+// TMF Keyboard - generated from a Microsoft KLC file by klc2xkb.py
+// Install: ~/.config/xkb/symbols/<this file name> (see README).
+// AltGr = Right Alt. Dead keys: Shift+6 (^), Shift+` (~), ` (grave), AltGr+' (grave).
+default partial alphanumeric_keys
+xkb_symbols "basic" {
+    include "us(basic)"
+    include "level3(ralt_switch)"
+    name[Group1] = "TMF Keyboard";
+
+    key <AE01> { type[Group1] = "FOUR_LEVEL", [ 1, exclam, exclamdown, onesuperior ] };  // 1 ! ¡ ¹
+    key <AE02> { type[Group1] = "FOUR_LEVEL", [ 2, at, twosuperior, NoSymbol ] };  // 2 @ ² -
+    key <AE03> { type[Group1] = "FOUR_LEVEL", [ 3, numbersign, threesuperior, NoSymbol ] };  // 3 # ³ -
+    key <AE04> { type[Group1] = "FOUR_LEVEL", [ 4, dollar, currency, sterling ] };  // 4 $ ¤ £
+    key <AE05> { type[Group1] = "FOUR_LEVEL", [ 5, percent, EuroSign, NoSymbol ] };  // 5 % € -
+    key <AE06> { type[Group1] = "FOUR_LEVEL", [ 6, dead_circumflex, onequarter, NoSymbol ] };  // 6 ^ ¼ -
+    key <AE07> { type[Group1] = "FOUR_LEVEL", [ 7, ampersand, onehalf, NoSymbol ] };  // 7 & ½ -
+    key <AE08> { type[Group1] = "FOUR_LEVEL", [ 8, asterisk, threequarters, NoSymbol ] };  // 8 * ¾ -
+    key <AE09> { type[Group1] = "FOUR_LEVEL", [ 9, parenleft, leftsinglequotemark, NoSymbol ] };  // 9 ( ‘ -
+    key <AE10> { type[Group1] = "FOUR_LEVEL", [ 0, parenright, rightsinglequotemark, NoSymbol ] };  // 0 ) ’ -
+    key <AE11> { type[Group1] = "FOUR_LEVEL", [ minus, underscore, yen, NoSymbol ] };  // - _ ¥ -
+    key <AE12> { type[Group1] = "FOUR_LEVEL", [ equal, plus, multiply, division ] };  // = + × ÷
+    key <AD01> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ q, Q, adiaeresis, Adiaeresis ] };  // q Q ä Ä
+    key <AD02> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ w, W, aring, Aring ] };  // w W å Å
+    key <AD03> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ e, E, eacute, Eacute ] };  // e E é É
+    key <AD04> { type[Group1] = "FOUR_LEVEL_SEMIALPHABETIC", [ r, R, registered, NoSymbol ] };  // r R ® -
+    key <AD05> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ t, T, thorn, THORN ] };  // t T þ Þ
+    key <AD06> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ y, Y, udiaeresis, Udiaeresis ] };  // y Y ü Ü
+    key <AD07> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ u, U, uacute, Uacute ] };  // u U ú Ú
+    key <AD08> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ i, I, iacute, Iacute ] };  // i I í Í
+    key <AD09> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ o, O, oacute, Oacute ] };  // o O ó Ó
+    key <AD10> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ p, P, odiaeresis, Odiaeresis ] };  // p P ö Ö
+    key <AD11> { type[Group1] = "FOUR_LEVEL", [ bracketleft, braceleft, guillemotleft, NoSymbol ] };  // [ { « -
+    key <AD12> { type[Group1] = "FOUR_LEVEL", [ bracketright, braceright, guillemotright, NoSymbol ] };  // ] } » -
+    key <AC01> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ a, A, aacute, Aacute ] };  // a A á Á
+    key <AC02> { type[Group1] = "FOUR_LEVEL_SEMIALPHABETIC", [ s, S, ssharp, section ] };  // s S ß §
+    key <AC03> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ d, D, eth, ETH ] };  // d D ð Ð
+    key <AC04> { type[Group1] = "ALPHABETIC", [ f, F ] };  // f F - -
+    key <AC05> { type[Group1] = "ALPHABETIC", [ g, G ] };  // g G - -
+    key <AC06> { type[Group1] = "ALPHABETIC", [ h, H ] };  // h H - -
+    key <AC07> { type[Group1] = "ALPHABETIC", [ j, J ] };  // j J - -
+    key <AC08> { type[Group1] = "ALPHABETIC", [ k, K ] };  // k K - -
+    key <AC09> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ l, L, oslash, Ooblique ] };  // l L ø Ø
+    key <AC10> { type[Group1] = "FOUR_LEVEL", [ semicolon, colon, masculine, ordfeminine ] };  // ; : º ª
+    key <AC11> { type[Group1] = "FOUR_LEVEL", [ apostrophe, quotedbl, dead_grave, acute ] };  // ' " ´ ´
+    key <TLDE> { type[Group1] = "FOUR_LEVEL", [ dead_grave, dead_tilde, grave, asciitilde ] };  // ` ~ ` ~
+    key <BKSL> { type[Group1] = "FOUR_LEVEL", [ backslash, bar, notsign, brokenbar ] };  // \ | ¬ ¦
+    key <AB01> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ z, Z, ae, AE ] };  // z Z æ Æ
+    key <AB02> { type[Group1] = "ALPHABETIC", [ x, X ] };  // x X - -
+    key <AB03> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ c, C, ccedilla, Ccedilla ] };  // c C ç Ç
+    key <AB04> { type[Group1] = "ALPHABETIC", [ v, V ] };  // v V - -
+    key <AB05> { type[Group1] = "ALPHABETIC", [ b, B ] };  // b B - -
+    key <AB06> { type[Group1] = "FOUR_LEVEL_ALPHABETIC", [ n, N, ntilde, Ntilde ] };  // n N ñ Ñ
+    key <AB07> { type[Group1] = "FOUR_LEVEL_SEMIALPHABETIC", [ m, M, mu, NoSymbol ] };  // m M µ -
+    key <AB08> { type[Group1] = "FOUR_LEVEL", [ comma, less, ccedilla, Ccedilla ] };  // , < ç Ç
+    key <AB09> { type[Group1] = "TWO_LEVEL", [ period, greater ] };  // . > - -
+    key <AB10> { type[Group1] = "FOUR_LEVEL", [ slash, question, questiondown, NoSymbol ] };  // / ? ¿ -
+    key <LSGT> { type[Group1] = "TWO_LEVEL", [ backslash, bar ] };  // \ | - -
+};

@@ -100,6 +100,10 @@ https://raw.githubusercontent.com/rmotafreitas/dotfiles/main/vscode/ricardo.code
 
 then choose what to include and create the profile. After editing files in `vscode/`, run `python3 scripts/vscode_profile.py` to rebuild the profile. Machine-specific paths (Snyk, Maven, JavaFX, YAML schemas, SSH hosts) are left out.
 
+## Keyboard layout
+
+[keyboard/](keyboard/) has my TMF Keyboard layout (US-International with Portuguese accents) for Windows, macOS and Linux, with install steps for each.
+
 ## Private and machine-specific settings
 
 These files live **outside this repository**:
