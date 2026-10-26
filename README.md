@@ -90,6 +90,16 @@ python3 scripts/install.py --apply --wallpapers  # link into ~/Pictures/Wallpape
 
 Existing pictures are preserved. In XFCE, open **Desktop Settings → Background**, choose `~/Pictures/Wallpapers`, then select an image for each monitor/workspace. The installer does not change the current wallpaper or import monitor-specific XFCE settings. See the [gallery and asset notes](wallpapers/README.md).
 
+## VS Code
+
+[vscode/](vscode/) holds my VS Code settings, snippets and extension list, plus `ricardo.code-profile` built from them. Import it without signing in: **Command Palette → Profiles: Import Profile…**, paste
+
+```text
+https://raw.githubusercontent.com/rmotafreitas/dotfiles/main/vscode/ricardo.code-profile
+```
+
+then choose what to include and create the profile. After editing files in `vscode/`, run `python3 scripts/vscode_profile.py` to rebuild the profile. Machine-specific paths (Snyk, Maven, JavaFX, YAML schemas, SSH hosts) are left out.
+
 ## Private and machine-specific settings
 
 These files live **outside this repository**:

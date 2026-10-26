@@ -1,0 +1,30 @@
+{
+	"New Eris command": {
+		"prefix": "!eris",
+		"body": [
+		  "const InteractionBase = require(\"../../../structures/InteractionBase\");",
+		  "const { EmbedBuilder } = require(\"../../../utils\");",
+		  "module.exports = class SlashCommand extends InteractionBase {",
+		  "  constructor(...args) {",
+		  "    super(...args, {",
+		  "      name: \"Name\",",
+		  "      description: \"Desc\",",
+		  "      options: [",
+		  "        {",
+		  "        },",
+		  "      ],",
+		  "    });",
+		  "  }",
+		  "  async run(interaction) {",
+		  "",
+		  "",
+		  "    return interaction.createMessage({",
+		  "      ",
+		  "    });",
+		  "  }",
+		  "};",
+		  ""
+		],
+		"description": ""
+	  }
+}

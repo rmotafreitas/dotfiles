@@ -176,6 +176,12 @@ class DotfilesTests(unittest.TestCase):
         # stdout is not a terminal here, like during the instant prompt; colors must be forced.
         self.assertEqual((self.home / 'fastfetch-args').read_text().strip(), '--pipe false')
 
+    def test_vscode_profile_is_regenerated(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import vscode_profile
+        self.assertEqual((ROOT / 'vscode/ricardo.code-profile').read_text(), vscode_profile.build(),
+                         'run python3 scripts/vscode_profile.py')
+
 
 if __name__ == '__main__':
     unittest.main()
