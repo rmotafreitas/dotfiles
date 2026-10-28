@@ -1,0 +1,39 @@
+{
+  "name": "t3-chat-theme",
+  "displayName": "T3 Chat Theme",
+  "description": "T3 Code's T3 Chat palette in light and dark, with Pierre syntax colors",
+  "version": "1.0.0",
+  "publisher": "rmotafreitas",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rmotafreitas/dotfiles.git"
+  },
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Themes"
+  ],
+  "keywords": [
+    "theme",
+    "color-theme",
+    "t3",
+    "t3-chat",
+    "pink"
+  ],
+  "contributes": {
+    "themes": [
+      {
+        "label": "T3 Chat Light",
+        "uiTheme": "vs",
+        "path": "./themes/t3-chat-light-color-theme.json"
+      },
+      {
+        "label": "T3 Chat Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/t3-chat-dark-color-theme.json"
+      }
+    ]
+  }
+}

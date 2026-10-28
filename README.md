@@ -15,7 +15,7 @@ python3 scripts/install.py          # preview; changes nothing
 python3 scripts/install.py --apply  # back up conflicts, then create symlinks
 ```
 
-Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, the [T3 Chat theme](#t3-chat-theme) files for Ghostty, btop and on Linux xfce4-terminal, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
 
 An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
 
@@ -31,13 +31,14 @@ The installer does not install packages, fetch plugins, change your login shell,
 | File | Purpose |
 | --- | --- |
 | `.config/shell/toolchain.sh` | Shared toolchain discovery and PATH deduplication |
-| `.config/shell/aliases.sh` | Git, Docker and tmux shortcuts, `bat`/`fd` names on Debian, `killport` |
+| `.config/shell/aliases.sh` | Git, Docker and tmux shortcuts, `bat`/`fd` names on Debian, `killport`, fzf and bat colors |
 | `.zshenv` | Toolchain environment for Zsh, including SSH commands |
 | `.zshrc` | History, optional plugins, prompt, completions, agent reuse and fastfetch on the first prompt |
 | `.bashrc` / `.profile` | Interactive Bash and login/SSH initialization |
 | `.gitconfig` | Defaults (`main` branch, fast-forward pulls, auto upstream on push, zdiff3 conflicts), then private identity and credentials |
 | `.tmux.conf` | Ctrl-a prefix, mouse, splits, scrollback and optional TPM plugins |
 | `linux/` | Debian package lists and their installer, described below |
+| `themes/t3-chat/` | The T3 Chat theme for VS Code, terminals and btop, described below |
 | `macos/` | Optional macOS layer, described below |
 
 ### Automatic environment
@@ -123,7 +124,24 @@ Existing pictures are preserved. In XFCE, open **Desktop Settings → Background
 https://raw.githubusercontent.com/rmotafreitas/dotfiles/main/vscode/ricardo.code-profile
 ```
 
-then choose what to include and create the profile. After editing files in `vscode/`, run `python3 scripts/vscode_profile.py` to rebuild the profile. Machine-specific paths (Snyk, Maven, JavaFX, YAML schemas, SSH hosts) are left out.
+then choose what to include and create the profile. The settings use the [T3 Chat theme](#t3-chat-theme), which the profile cannot install; install its `.vsix` first. After editing files in `vscode/`, run `python3 scripts/vscode_profile.py` to rebuild the profile. Machine-specific paths (Snyk, Maven, JavaFX, YAML schemas, SSH hosts) are left out.
+
+## T3 Chat theme
+
+[themes/t3-chat/](themes/t3-chat/) carries T3 Code's built-in **T3 Chat** palette, light and dark, to my other tools. [palette.json](themes/t3-chat/palette.json) holds the colors exactly as T3 Code defines them (OKLCH), and `python3 scripts/t3_chat_theme.py` generates everything else from it; the tests fail if a generated file is out of date.
+
+| Where | How |
+| --- | --- |
+| VS Code (also Cursor and other VS Code forks) | `code --install-extension themes/t3-chat/t3-chat-theme-1.0.0.vsix`. My settings follow the system: T3 Chat Light or T3 Chat Dark. |
+| Ghostty | The installer links the themes into `~/.config/ghostty/themes`; my macOS config switches with the system appearance. |
+| xfce4-terminal | **Preferences → Colors → Presets**: T3 Chat Light or T3 Chat Dark. |
+| btop | **Esc → Options → color theme**, or `color_theme = "t3-chat-dark"` in `~/.config/btop/btop.conf`. |
+| tmux, fzf, bat | Automatic: the pink accent in tmux and fzf works in both modes, and bat uses the terminal's colors. |
+| T3 Code | Built in: **Settings → Appearance → T3 Chat**. |
+
+Without a clone, download the extension from `https://raw.githubusercontent.com/rmotafreitas/dotfiles/main/themes/t3-chat/t3-chat-theme-1.0.0.vsix` and install it with `code --install-extension`.
+
+The VS Code theme maps T3 Code's roles (canvas, sidebar, accent, terminal and so on) onto workbench colors. Syntax highlighting uses [Pierre](https://github.com/pierrecomputer/pierre), the same token colors T3 Code uses for code blocks and diffs (Apache-2.0, see [themes/t3-chat/pierre/](themes/t3-chat/pierre/)). Terminals keep VS Code's default ANSI colors, as T3 Code's own terminal does. The palette comes from [T3 Code](https://github.com/pingdotgg/t3code) (MIT).
 
 ## Keyboard layout
 

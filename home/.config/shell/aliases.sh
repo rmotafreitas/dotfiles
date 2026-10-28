@@ -25,3 +25,8 @@ killport() {
     }
     printf '%s\n' "$pids" | xargs kill "${2:--TERM}"
 }
+
+# fzf matches and pointer in T3 Chat pink; the rest follows the terminal's colors.
+export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS-"--color=hl:#db2777,hl+:#db2777,pointer:#db2777,marker:#db2777,prompt:#db2777,spinner:#db2777"}"
+# bat highlights with the terminal's 16 colors, so it stays readable in both T3 Chat modes.
+export BAT_THEME="${BAT_THEME-ansi}"

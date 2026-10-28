@@ -220,6 +220,59 @@ class DotfilesTests(unittest.TestCase):
                                          (out / 'rules/evdev.xml', kb / 'linux/rules/evdev.xml')):
                 self.assertEqual(generated.read_bytes(), committed.read_bytes(), committed)
 
+    def test_t3_chat_theme_is_regenerated(self):
+        subprocess.run([sys.executable, str(ROOT / 'scripts/t3_chat_theme.py'), '--check'], check=True, capture_output=True)
+
+    def test_t3_chat_colors_and_vscode_theme(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import json
+        import zipfile
+        import t3_chat_theme as theme
+        palette = theme.load_palette()
+        # Reference values from culori, including the one color just outside sRGB.
+        self.assertEqual(palette['light']['hex']['canvas'], '#fdf7fd')
+        self.assertEqual(palette['dark']['hex']['canvas'], '#1f1a24')
+        self.assertEqual(palette['light']['hex']['searchMatchBackground'], '#ffde8b')
+        self.assertEqual(palette['dark']['hex']['focus'], '#db2777')
+        luminance = lambda h: sum(w * ((c / 255) / 12.92 if c / 255 <= 0.04045 else ((c / 255 + 0.055) / 1.055) ** 2.4)
+                                  for w, c in zip((0.2126, 0.7152, 0.0722), bytes.fromhex(h[1:])))
+        contrast = lambda a, b: (max(luminance(a), luminance(b)) + 0.05) / (min(luminance(a), luminance(b)) + 0.05)
+        themes = ROOT / 'themes/t3-chat'
+        manifest = json.loads((themes / 'vscode/package.json').read_text())
+        for entry, mode in zip(manifest['contributes']['themes'], theme.MODES):
+            c = palette[mode]['hex']
+            self.assertGreaterEqual(contrast(c['text'], c['canvas']), 4.5, mode)
+            vscode = json.loads((themes / 'vscode' / entry['path']).read_text())
+            self.assertEqual((vscode['name'], vscode['type']), (entry['label'], mode))
+            self.assertEqual(vscode['colors']['editor.background'], c['canvas'])
+            self.assertEqual(vscode['colors']['terminal.background'], c['terminalBackground'])
+            # T3 Code's terminal uses VS Code's default ANSI colors, so the theme must not override them.
+            self.assertFalse([k for k in vscode['colors'] if k.startswith('terminal.ansi')])
+            self.assertNotIn('diffEditor.deletedTextBackground', vscode['colors'])
+            self.assertTrue(vscode['tokenColors'])
+            ghostty = (themes / f'ghostty/T3 Chat {mode.title()}').read_text()
+            self.assertIn(f'background = {c["terminalBackground"]}', ghostty)
+            self.assertEqual(ghostty.count('palette = '), 16)
+        with zipfile.ZipFile(theme.VSIX) as vsix:
+            names = set(vsix.namelist())
+            self.assertIn('extension.vsixmanifest', names)
+            self.assertIn(f'Version="{manifest["version"]}"', vsix.read('extension.vsixmanifest').decode())
+            for entry in manifest['contributes']['themes']:
+                self.assertIn('extension/' + entry['path'].removeprefix('./'), names)
+        # tmux and fzf hard-code the pink accent shared by both modes.
+        for config in ('home/.tmux.conf', 'home/.config/shell/aliases.sh'):
+            self.assertIn(palette['light']['hex']['focus'], (ROOT / config).read_text())
+
+    def test_t3_chat_theme_files_are_linked_per_platform(self):
+        self.install('--apply', '--platform', 'linux')
+        for name in ['.config/ghostty/themes/T3 Chat Dark', '.config/btop/themes/t3-chat-light.theme',
+                     '.local/share/xfce4/terminal/colorschemes/t3-chat-dark.theme']:
+            self.assertTrue((self.home / name).is_symlink() and (self.home / name).resolve().is_file(), name)
+        with tempfile.TemporaryDirectory() as mac:
+            subprocess.run([sys.executable, str(INSTALL), '--home', mac, '--apply', '--platform', 'darwin'], check=True, capture_output=True)
+            self.assertTrue((Path(mac) / '.config/ghostty/themes/T3 Chat Light').is_symlink())
+            self.assertFalse((Path(mac) / '.local/share/xfce4').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -17,6 +17,13 @@ MACOS_FILES = (('home/.bash_profile', '.bash_profile'), ('home/.zprofile', '.zpr
                ('home/.config/zsh/macos.zsh', '.config/zsh/macos.zsh'),
                ('ghostty/config.ghostty', 'Library/Application Support/com.mitchellh.ghostty/config.ghostty'))
 
+# T3 Chat theme files (source under themes/t3-chat/, target relative to home).
+THEME_FILES = tuple((f'{app}/{name}', f'{target}/{name}') for mode in ('Light', 'Dark') for app, name, target in (
+    ('ghostty', f'T3 Chat {mode}', '.config/ghostty/themes'),
+    ('btop', f't3-chat-{mode.lower()}.theme', '.config/btop/themes')))
+LINUX_THEME_FILES = tuple((f'xfce4-terminal/t3-chat-{mode}.theme', f'.local/share/xfce4/terminal/colorschemes/t3-chat-{mode}.theme')
+                          for mode in ('light', 'dark'))
+
 WALLPAPERS = ('02rz3dw29c2h1_upscaled.jpeg', 'nicerocket.png', 'wallhaven-9o927x_3840x2160.png',
               'wallhaven-qrgqyq_3840x2160.png')
 
@@ -27,6 +34,8 @@ def install(home: Path, apply: bool, wallpapers: bool = False, platform: str = '
     entries = [(ROOT / 'home' / name, Path(name)) for name in FILES]
     if platform == 'auto':
         platform = 'darwin' if sys.platform == 'darwin' else 'linux'
+    theme_files = THEME_FILES + (LINUX_THEME_FILES if platform == 'linux' else ())
+    entries += [(ROOT / 'themes/t3-chat' / source, Path(target)) for source, target in theme_files]
     if platform == 'darwin':
         entries += [(ROOT / 'macos' / source, Path(target)) for source, target in MACOS_FILES]
     if wallpapers:
