@@ -39,5 +39,12 @@ if [[ -z "$SSH_AUTH_SOCK" && -S "/run/user/$UID/openssh_agent" ]]; then
     SSH_AUTH_SOCK="/run/user/$UID/openssh_agent" ssh-add -l >/dev/null 2>&1
     (( $? > 1 )) || export SSH_AUTH_SOCK="/run/user/$UID/openssh_agent"
 fi
+# Show system info once, before the first prompt. Powerlevel10k's instant prompt still has
+# stdout redirected here, so fastfetch would see a pipe and drop its colors: keep them.
+_fastfetch_once() {
+    (( $+commands[fastfetch] )) && fastfetch --pipe false
+    precmd_functions=(${precmd_functions:#_fastfetch_once})
+}
+precmd_functions+=(_fastfetch_once)
 [[ ! -r "$HOME/.config/zsh/macos.zsh" ]] || source "$HOME/.config/zsh/macos.zsh"
 [[ ! -r "$HOME/.zshrc.local" ]] || source "$HOME/.zshrc.local"

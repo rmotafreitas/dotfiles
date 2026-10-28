@@ -16,14 +16,6 @@ fi
 [[ -z ${HOMEBREW_PREFIX-} || ! -s $HOMEBREW_PREFIX/opt/nvm/etc/bash_completion.d/nvm ]] ||
     source "$HOMEBREW_PREFIX/opt/nvm/etc/bash_completion.d/nvm"
 
-# Show system info once, before the first prompt. Powerlevel10k's instant prompt still has
-# stdout redirected here, so fastfetch would see a pipe and drop its colors: keep them.
-_fastfetch_once() {
-    (( $+commands[fastfetch] )) && fastfetch --pipe false
-    precmd_functions=(${precmd_functions:#_fastfetch_once})
-}
-precmd_functions+=(_fastfetch_once)
-
 # bag: list what blocks sleep, then offer to sleep anyway.
 bag() {
     echo "🔍 A verificar o que está a bloquear o sleep...\n"

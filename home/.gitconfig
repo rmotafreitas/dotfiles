@@ -1,3 +1,18 @@
-# Identity and credential helpers belong in this private, untracked file.
+# Shared defaults. Identity and credential helpers belong in ~/.gitconfig.local,
+# included last so its values win.
+[init]
+    defaultBranch = main
+[pull]
+    ff = only
+[push]
+    autoSetupRemote = true
+[fetch]
+    prune = true
+[diff]
+    colorMoved = default
+[merge]
+    conflictStyle = zdiff3
+[help]
+    autocorrect = prompt
 [include]
     path = ~/.gitconfig.local

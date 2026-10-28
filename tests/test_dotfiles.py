@@ -167,14 +167,40 @@ class DotfilesTests(unittest.TestCase):
     def test_startup_fastfetch_keeps_colors_during_the_instant_prompt(self):
         if not shutil.which('zsh'):
             self.skipTest('zsh is not installed')
-        self.install('--apply', '--platform', 'darwin')
         fake = self.home / 'bin/fastfetch'
         fake.parent.mkdir()
         fake.write_text('#!/bin/sh\necho "$@" > "$HOME/fastfetch-args"\n')
         fake.chmod(0o755)
-        subprocess.run(['zsh', '-ic', '_fastfetch_once'], env=self.shell_env(), check=True, capture_output=True, stdin=subprocess.DEVNULL)
-        # stdout is not a terminal here, like during the instant prompt; colors must be forced.
-        self.assertEqual((self.home / 'fastfetch-args').read_text().strip(), '--pipe false')
+        for platform in ['linux', 'darwin']:
+            self.install('--apply', '--platform', platform)
+            (self.home / 'fastfetch-args').unlink(missing_ok=True)
+            subprocess.run(['zsh', '-ic', '_fastfetch_once'], env=self.shell_env(), check=True, capture_output=True, stdin=subprocess.DEVNULL)
+            # stdout is not a terminal here, like during the instant prompt; colors must be forced.
+            self.assertEqual((self.home / 'fastfetch-args').read_text().strip(), '--pipe false', platform)
+
+    def test_linux_packages_preview_lists_missing_and_unavailable(self):
+        bin_dir = self.home / 'bin'
+        bin_dir.mkdir()
+        fakes = {
+            'apt-get': 'exit 0',
+            # Only git is installed.
+            'dpkg-query': '[ "$3" = git ] && printf "install ok installed"',
+            # The Brave repository is not configured.
+            'apt-cache': 'case $2 in brave-origin) echo "  Candidate: (none)" ;; *) echo "  Candidate: 1.0" ;; esac',
+            'sudo': 'touch "$HOME/sudo-called"',
+        }
+        for name, body in fakes.items():
+            (bin_dir / name).write_text(f'#!/bin/sh\n{body}\n')
+            (bin_dir / name).chmod(0o755)
+        result = subprocess.run(['sh', str(ROOT / 'linux/packages.sh')], env=self.shell_env(PATH=f'{bin_dir}:/usr/bin:/bin'),
+                                check=True, capture_output=True, text=True)
+        planned = result.stdout.split('Would install:')[1].split('\n')[0].split()
+        self.assertIn('fastfetch', planned)
+        self.assertNotIn('git', planned)
+        self.assertNotIn('brave-origin', planned)
+        self.assertIn('configured apt source (see', result.stdout)
+        self.assertIn('brave-origin', result.stdout.split('Would install:')[0])
+        self.assertFalse((self.home / 'sudo-called').exists())
 
     def test_vscode_profile_is_regenerated(self):
         sys.path.insert(0, str(ROOT / 'scripts'))
