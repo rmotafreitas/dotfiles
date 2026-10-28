@@ -1,0 +1,66 @@
+# Packages from the Debian archive: sh linux/packages.sh [--apply]
+# One name per line; text after # is ignored. Base-system and tasksel packages are left out.
+
+# Shell and terminal
+zsh
+bash-completion
+tmux
+vim
+fzf
+bat
+btop
+htop
+fastfetch
+tree
+
+# Everyday command-line tools
+curl
+wget
+git
+gnupg
+ca-certificates
+zip
+unzip
+zstd
+xz-utils
+lsof
+file
+
+# Networking
+net-tools
+iftop
+traceroute
+bind9-dnsutils
+netcat-traditional
+lftp
+
+# Development
+build-essential
+pkg-config
+libicu-dev
+sqlite3
+mkcert
+libnss3-tools
+qrencode
+
+# Media
+ffmpeg
+mkvtoolnix
+
+# Hardware and diagnostics
+lm-sensors
+smartmontools
+nvme-cli
+stress-ng
+pciutils
+usbutils
+vainfo
+mesa-va-drivers
+
+# Desktop (XFCE) extras and remote access
+dbus-x11
+xrdp
+xorgxrdp
+bluez
+bluez-firmware
+blueman

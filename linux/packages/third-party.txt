@@ -1,0 +1,20 @@
+# Packages from vendor apt repositories. Add each repository with the vendor's
+# instructions first; the installer skips names that no configured source provides.
+
+# Docker Engine: https://docs.docker.com/engine/install/debian/
+docker-ce
+docker-ce-cli
+containerd.io
+docker-buildx-plugin
+docker-compose-plugin
+docker-model-plugin
+
+# GitHub CLI: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+gh
+
+# Tailscale: https://tailscale.com/kb/1031/install-linux
+tailscale
+tailscale-archive-keyring
+
+# Brave Origin: https://brave.com/linux/
+brave-origin

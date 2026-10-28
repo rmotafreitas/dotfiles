@@ -31,12 +31,13 @@ The installer does not install packages, fetch plugins, change your login shell,
 | File | Purpose |
 | --- | --- |
 | `.config/shell/toolchain.sh` | Shared toolchain discovery and PATH deduplication |
-| `.config/shell/aliases.sh` | Git, Docker and tmux shortcuts |
+| `.config/shell/aliases.sh` | Git, Docker and tmux shortcuts, `bat`/`fd` names on Debian, `killport` |
 | `.zshenv` | Toolchain environment for Zsh, including SSH commands |
-| `.zshrc` | History, optional plugins, prompt, completions and agent reuse |
+| `.zshrc` | History, optional plugins, prompt, completions, agent reuse and fastfetch on the first prompt |
 | `.bashrc` / `.profile` | Interactive Bash and login/SSH initialization |
-| `.gitconfig` | Includes private local identity and credentials |
+| `.gitconfig` | Defaults (`main` branch, fast-forward pulls, auto upstream on push, zdiff3 conflicts), then private identity and credentials |
 | `.tmux.conf` | Ctrl-a prefix, mouse, splits, scrollback and optional TPM plugins |
+| `linux/` | Debian package lists and their installer, described below |
 | `macos/` | Optional macOS layer, described below |
 
 ### Automatic environment
@@ -61,6 +62,30 @@ The setup works without these. Install only what you use through their official 
 
 Zsh reuses an existing SSH session agent when available. It does not spawn extra agents or load private keys at startup.
 
+## Linux packages
+
+[linux/packages/debian.txt](linux/packages/debian.txt) lists the packages I install from the Debian archive (fastfetch, btop, htop, bat, fzf, tmux, ffmpeg, diagnostics tools and so on), and [third-party.txt](linux/packages/third-party.txt) lists the ones from vendor repositories (Docker, GitHub CLI, Tailscale, Brave), with a link to each vendor's setup instructions. The base system and the XFCE desktop come from the Debian installer and are not listed.
+
+```sh
+sh linux/packages.sh          # show what is missing; changes nothing
+sh linux/packages.sh --apply  # sudo apt-get install the missing packages
+```
+
+Only missing packages are installed and nothing is removed. Packages that no configured apt source provides, such as a vendor package before its repository is added, are reported and skipped.
+
+These come from their own installers instead of apt, usually because Debian's version is older:
+
+| Tool | Source |
+| --- | --- |
+| Rust | [rustup](https://rustup.rs/) |
+| Node, `@openai/codex`, `eas-cli` | [NVM](https://github.com/nvm-sh/nvm), then `npm install -g` |
+| Java, Gradle, Maven, Ant | [SDKMAN](https://sdkman.io/) |
+| Bun | [bun.sh](https://bun.sh/) |
+| Claude Code | [native installer](https://code.claude.com/docs/en/setup) |
+| Starship, dust | Release binaries in `/usr/local/bin` (`starship` and `du-dust` are also in Debian) |
+| lazydocker, jq, yt-dlp, ccache | Release binaries in `~/.local/bin` |
+| Oh My Zsh, zsh-autosuggestions, zsh-syntax-highlighting, TPM | Git clones, see [Optional tools](#optional-tools) |
+
 ## macOS
 
 On macOS the installer also links the files in [macos/](macos/), and Linux machines never see them:
@@ -69,7 +94,7 @@ On macOS the installer also links the files in [macos/](macos/), and Linux machi
 | --- | --- |
 | `.config/shell/macos.sh` | Homebrew, pyenv and extra `PATH` entries; Bash completion and fzf for interactive Bash |
 | `.config/zsh/macos-pre.zsh` | Powerlevel10k instant prompt, Docker completions and the extra Oh My Zsh plugins; skipped when not installed |
-| `.config/zsh/macos.zsh` | p10k config, fzf, pyenv integration, fastfetch on the first prompt and the `bag` helper |
+| `.config/zsh/macos.zsh` | p10k config, fzf, pyenv integration and the `bag` helper |
 | `.zprofile` | Restores the toolchain `PATH` after macOS's `path_helper` has moved system directories to the front |
 | `.bash_profile` | macOS login shells read this instead of `.profile` |
 | `.p10k.zsh` | Powerlevel10k prompt configuration |
