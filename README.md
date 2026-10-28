@@ -15,7 +15,7 @@ python3 scripts/install.py          # preview; changes nothing
 python3 scripts/install.py --apply  # back up conflicts, then create symlinks
 ```
 
-Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, the [T3 Chat theme](#t3-chat-theme) files for Ghostty, btop and on Linux xfce4-terminal, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, the [T3 Chat theme](#t3-chat-theme) files for Ghostty, btop and lazydocker, xfce4-terminal on Linux and Xcode on a Mac, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
 
 An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
 
@@ -38,7 +38,7 @@ The installer does not install packages, fetch plugins, change your login shell,
 | `.gitconfig` | Defaults (`main` branch, fast-forward pulls, auto upstream on push, zdiff3 conflicts), then private identity and credentials |
 | `.tmux.conf` | Ctrl-a prefix, mouse, splits, scrollback and optional TPM plugins |
 | `linux/` | Debian package lists and their installer, described below |
-| `themes/t3-chat/` | The T3 Chat theme for VS Code, terminals and btop, described below |
+| `themes/t3-chat/` | The T3 Chat theme for VS Code, JetBrains, Xcode, terminals, Notepad++ and more, described below |
 | `macos/` | Optional macOS layer, described below |
 
 ### Automatic environment
@@ -136,12 +136,44 @@ then choose what to include and create the profile. The settings use the [T3 Cha
 | Ghostty | The installer links the themes into `~/.config/ghostty/themes`; my macOS config switches with the system appearance. |
 | xfce4-terminal | **Preferences → Colors → Presets**: T3 Chat Light or T3 Chat Dark. |
 | btop | **Esc → Options → color theme**, or `color_theme = "t3-chat-dark"` in `~/.config/btop/btop.conf`. |
+| JetBrains IDEs (DataGrip, Android Studio, IntelliJ) | **Settings → Plugins → ⚙ → Install Plugin from Disk…** → `themes/t3-chat/jetbrains/t3-chat-theme-1.0.0.jar`, then pick T3 Chat Light or Dark under **Appearance → Theme**. It themes the whole IDE and the editor. For the editor only: **Editor → Color Scheme → ⚙ → Import Scheme…** → a `.icls` file. |
+| Xcode | The installer links both themes on macOS; choose one in **Settings → Themes**. |
+| Windows Terminal (also WSL) | Copy the fragment and set the default scheme, see [Windows](#windows) below. |
+| Notepad++ | See [Windows](#windows) below. |
+| lazydocker | The installer links its config: pink active border and readable selection in both modes. Docker Desktop only offers light, dark or system. |
 | tmux, fzf, bat | Automatic: the pink accent in tmux and fzf works in both modes, and bat uses the terminal's colors. |
 | T3 Code | Built in: **Settings → Appearance → T3 Chat**. |
 
 Without a clone, download the extension from `https://raw.githubusercontent.com/rmotafreitas/dotfiles/main/themes/t3-chat/t3-chat-theme-1.0.0.vsix` and install it with `code --install-extension`.
 
-The VS Code theme maps T3 Code's roles (canvas, sidebar, accent, terminal and so on) onto workbench colors. Syntax highlighting uses [Pierre](https://github.com/pierrecomputer/pierre), the same token colors T3 Code uses for code blocks and diffs (Apache-2.0, see [themes/t3-chat/pierre/](themes/t3-chat/pierre/)). Terminals keep VS Code's default ANSI colors, as T3 Code's own terminal does. The palette comes from [T3 Code](https://github.com/pingdotgg/t3code) (MIT).
+The VS Code theme maps T3 Code's roles (canvas, sidebar, accent, terminal and so on) onto workbench colors. Syntax highlighting uses [Pierre](https://github.com/pierrecomputer/pierre), the same token colors T3 Code uses for code blocks and diffs (Apache-2.0, see [themes/t3-chat/pierre/](themes/t3-chat/pierre/)). Terminals keep VS Code's default ANSI colors, as T3 Code's own terminal does. The palette comes from [T3 Code](https://github.com/pingdotgg/t3code) (MIT). JetBrains, Xcode and Notepad++ get the same Pierre colors per syntax category, and the Notepad++ themes recolor Notepad++'s own [style list](themes/t3-chat/notepad-plus-plus/) (GPL-3.0).
+
+### Windows
+
+In PowerShell, from a clone of this repository:
+
+```powershell
+# VS Code (also themes VS Code windows connected to WSL)
+code --install-extension themes\t3-chat\t3-chat-theme-1.0.0.vsix
+
+# Windows Terminal: add both color schemes
+$fragments = "$env:LOCALAPPDATA\Microsoft\Windows Terminal\Fragments\T3 Chat"
+New-Item -ItemType Directory -Force $fragments | Out-Null
+Copy-Item themes\t3-chat\windows-terminal\t3-chat.json $fragments
+
+# Notepad++
+Copy-Item "themes\t3-chat\notepad-plus-plus\T3 Chat *.xml" "$env:APPDATA\Notepad++\themes\"
+```
+
+Then in Windows Terminal's **Settings → Open JSON file**, make every profile, WSL Ubuntu included, follow the Windows light/dark setting:
+
+```json
+"profiles": { "defaults": { "colorScheme": { "light": "T3 Chat Light", "dark": "T3 Chat Dark" } } }
+```
+
+In Notepad++, choose the theme in **Settings → Style Configurator… → Select theme**; with T3 Chat Dark also turn on **Settings → Preferences → Dark Mode** so the menus match.
+
+Inside WSL, install these dotfiles as on Linux: clone, then `python3 scripts/install.py --apply`. On Ubuntu, `linux/packages.sh` reports fastfetch as unavailable (Ubuntu 24.04 does not package it), and the desktop and hardware groups in `debian.txt` do not apply to WSL.
 
 ## Keyboard layout
 

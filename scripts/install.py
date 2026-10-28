@@ -22,7 +22,11 @@ THEME_FILES = tuple((f'{app}/{name}', f'{target}/{name}') for mode in ('Light', 
     ('ghostty', f'T3 Chat {mode}', '.config/ghostty/themes'),
     ('btop', f't3-chat-{mode.lower()}.theme', '.config/btop/themes')))
 LINUX_THEME_FILES = tuple((f'xfce4-terminal/t3-chat-{mode}.theme', f'.local/share/xfce4/terminal/colorschemes/t3-chat-{mode}.theme')
-                          for mode in ('light', 'dark'))
+                          for mode in ('light', 'dark')) + (('lazydocker/config.yml', '.config/lazydocker/config.yml'),)
+MACOS_THEME_FILES = tuple((f'xcode/T3 Chat {mode}.xccolortheme',
+                           f'Library/Developer/Xcode/UserData/FontAndColorThemes/T3 Chat {mode}.xccolortheme')
+                          for mode in ('Light', 'Dark')) + (
+    ('lazydocker/config.yml', 'Library/Application Support/jesseduffield/lazydocker/config.yml'),)
 
 WALLPAPERS = ('02rz3dw29c2h1_upscaled.jpeg', 'nicerocket.png', 'wallhaven-9o927x_3840x2160.png',
               'wallhaven-qrgqyq_3840x2160.png')
@@ -34,7 +38,7 @@ def install(home: Path, apply: bool, wallpapers: bool = False, platform: str = '
     entries = [(ROOT / 'home' / name, Path(name)) for name in FILES]
     if platform == 'auto':
         platform = 'darwin' if sys.platform == 'darwin' else 'linux'
-    theme_files = THEME_FILES + (LINUX_THEME_FILES if platform == 'linux' else ())
+    theme_files = THEME_FILES + (MACOS_THEME_FILES if platform == 'darwin' else LINUX_THEME_FILES)
     entries += [(ROOT / 'themes/t3-chat' / source, Path(target)) for source, target in theme_files]
     if platform == 'darwin':
         entries += [(ROOT / 'macos' / source, Path(target)) for source, target in MACOS_FILES]

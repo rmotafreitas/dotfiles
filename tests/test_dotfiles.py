@@ -273,6 +273,44 @@ class DotfilesTests(unittest.TestCase):
             self.assertTrue((Path(mac) / '.config/ghostty/themes/T3 Chat Light').is_symlink())
             self.assertFalse((Path(mac) / '.local/share/xfce4').exists())
 
+    def test_t3_chat_ports_for_other_apps(self):
+        import json
+        import plistlib
+        import xml.etree.ElementTree as ET
+        import zipfile
+        themes = ROOT / 'themes/t3-chat'
+        with zipfile.ZipFile(themes / 'jetbrains/t3-chat-theme-1.0.0.jar') as jar:
+            plugin = ET.fromstring(jar.read('META-INF/plugin.xml'))
+            providers = plugin.findall('extensions/themeProvider')
+            self.assertEqual([p.get('id') for p in providers], ['t3-chat-light', 't3-chat-dark'])
+            for provider in providers:
+                ui = json.loads(jar.read(provider.get('path').lstrip('/')))
+                self.assertIn(ui['parentTheme'], ('ExperimentalLight', 'ExperimentalDark'))
+                scheme = ET.fromstring(jar.read(ui['editorScheme'].lstrip('/')))
+                self.assertEqual(scheme.get('name'), ui['name'])
+        terminal = json.loads((themes / 'windows-terminal/t3-chat.json').read_text())
+        self.assertEqual([s['name'] for s in terminal['schemes']], ['T3 Chat Light', 'T3 Chat Dark'])
+        self.assertTrue(all(len(s) == 21 for s in terminal['schemes']))  # name, 4 colors, 16 ANSI
+        model = ET.parse(themes / 'notepad-plus-plus/stylers.model.xml').getroot()
+        styles = lambda root: [(l.get('name'), w.get('styleID')) for l in root.find('LexerStyles') for w in l]
+        for mode in ('Light', 'Dark'):
+            xcode = plistlib.loads((themes / f'xcode/T3 Chat {mode}.xccolortheme').read_bytes())
+            self.assertIn('xcode.syntax.keyword', xcode['DVTSourceTextSyntaxColors'])
+            self.assertEqual(set(xcode['DVTSourceTextSyntaxColors']), set(xcode['DVTSourceTextSyntaxFonts']))
+            notepad = ET.parse(themes / f'notepad-plus-plus/T3 Chat {mode}.xml').getroot()
+            self.assertEqual(styles(notepad), styles(model))
+        self.assertIn('magenta', (themes / 'lazydocker/config.yml').read_text())
+
+    def test_t3_chat_app_configs_are_linked_per_platform(self):
+        self.install('--apply', '--platform', 'linux')
+        self.assertTrue((self.home / '.config/lazydocker/config.yml').is_symlink())
+        self.assertFalse((self.home / 'Library').exists())
+        with tempfile.TemporaryDirectory() as mac:
+            subprocess.run([sys.executable, str(INSTALL), '--home', mac, '--apply', '--platform', 'darwin'], check=True, capture_output=True)
+            for name in ['Library/Developer/Xcode/UserData/FontAndColorThemes/T3 Chat Dark.xccolortheme',
+                         'Library/Application Support/jesseduffield/lazydocker/config.yml']:
+                self.assertTrue((Path(mac) / name).resolve().is_file(), name)
+
 
 if __name__ == '__main__':
     unittest.main()
