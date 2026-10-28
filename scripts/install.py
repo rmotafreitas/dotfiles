@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ('.bashrc', '.profile', '.zshenv', '.zshrc', '.gitconfig', '.tmux.conf',
-         '.config/shell/toolchain.sh', '.config/shell/aliases.sh')
+         '.config/shell/toolchain.sh', '.config/shell/aliases.sh', '.config/starship.toml')
 # (source under macos/, target relative to home); linked only on macOS.
 MACOS_FILES = (('home/.bash_profile', '.bash_profile'), ('home/.zprofile', '.zprofile'),
                ('home/.p10k.zsh', '.p10k.zsh'),
@@ -20,7 +20,7 @@ MACOS_FILES = (('home/.bash_profile', '.bash_profile'), ('home/.zprofile', '.zpr
 # T3 Chat theme files (source under themes/t3-chat/, target relative to home).
 THEME_FILES = tuple((f'{app}/{name}', f'{target}/{name}') for mode in ('Light', 'Dark') for app, name, target in (
     ('ghostty', f'T3 Chat {mode}', '.config/ghostty/themes'),
-    ('btop', f't3-chat-{mode.lower()}.theme', '.config/btop/themes')))
+    ('btop', f't3-chat-{mode.lower()}.theme', '.config/btop/themes'))) + (('shell/t3-chat.sh', '.config/shell/t3-chat.sh'),)
 LINUX_THEME_FILES = tuple((f'xfce4-terminal/t3-chat-{mode}.theme', f'.local/share/xfce4/terminal/colorschemes/t3-chat-{mode}.theme')
                           for mode in ('light', 'dark')) + (('lazydocker/config.yml', '.config/lazydocker/config.yml'),)
 MACOS_THEME_FILES = tuple((f'xcode/T3 Chat {mode}.xccolortheme',

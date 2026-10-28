@@ -28,4 +28,6 @@ elif [ -z "${NO_COLOR:-}" ]; then
 else
     PS1='\u@\h:\w\$ '
 fi
+# T3 Chat terminal colors (light unless `t3-theme dark`).
+[ ! -r "$HOME/.config/shell/t3-chat.sh" ] || . "$HOME/.config/shell/t3-chat.sh"
 [ ! -r "$HOME/.bashrc.local" ] || . "$HOME/.bashrc.local"

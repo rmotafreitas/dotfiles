@@ -17,6 +17,7 @@ jobs:
         run: |
           bash -n home/.bashrc home/.profile home/.config/shell/toolchain.sh home/.config/shell/aliases.sh macos/home/.bash_profile macos/home/.config/shell/macos.sh macos/defaults.sh
           sh -n linux/packages.sh
+          bash -n themes/t3-chat/shell/t3-chat.sh && zsh -n themes/t3-chat/shell/t3-chat.sh
           zsh -n home/.zshenv home/.zshrc home/.config/shell/toolchain.sh macos/home/.zprofile macos/home/.config/zsh/macos-pre.zsh macos/home/.config/zsh/macos.zsh macos/home/.config/shell/macos.sh
       - name: Test installer and shell startup
         run: python3 -m unittest discover -s tests -v

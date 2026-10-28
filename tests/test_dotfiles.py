@@ -311,6 +311,36 @@ class DotfilesTests(unittest.TestCase):
                          'Library/Application Support/jesseduffield/lazydocker/config.yml']:
                 self.assertTrue((Path(mac) / name).resolve().is_file(), name)
 
+    def test_t3_theme_defaults_to_light_and_switches(self):
+        self.install('--apply')
+        btop = self.home / '.config/btop/btop.conf'
+        btop.write_text('color_theme = "Default"\n')
+        for shell in ['bash', 'zsh']:
+            if not shutil.which(shell):
+                self.skipTest(f'{shell} is not installed')
+            (self.home / '.config/t3-chat/mode').unlink(missing_ok=True)
+            run = lambda command: subprocess.run([shell, '-ic', command], env=self.shell_env(), check=True,
+                                                 capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+            self.assertIn('T3 Chat light', run('t3-theme'))
+            run('t3-theme dark')
+            self.assertEqual((self.home / '.config/t3-chat/mode').read_text(), 'dark\n')
+            self.assertIn('color_theme = "t3-chat-dark"', btop.read_text())
+            self.assertIn('T3 Chat dark', run('t3-theme'))
+            run('t3-theme light')
+            self.assertIn('color_theme = "t3-chat-light"', btop.read_text())
+
+    @unittest.skipUnless(sys.platform.startswith('linux') and shutil.which('script') and shutil.which('zsh'), 'needs util-linux script')
+    def test_t3_theme_colors_the_terminal_at_the_first_prompt(self):
+        self.install('--apply')
+        def background(**extra):
+            out = subprocess.run(['script', '-qec', 'zsh -i', '/dev/null'], input='exit\n', capture_output=True, text=True,
+                                 env=self.shell_env(TERM='xterm-256color', **extra)).stdout
+            return out.split('\033]11;')[1][:7] if '\033]11;' in out else None
+        self.assertEqual(background(), '#fdf7fd')
+        self.assertEqual(background(T3_CHAT_MODE='dark'), '#1f1a24')
+        # VS Code's terminal follows the VS Code theme instead.
+        self.assertIsNone(background(TERM_PROGRAM='vscode'))
+
 
 if __name__ == '__main__':
     unittest.main()

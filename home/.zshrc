@@ -39,6 +39,8 @@ if [[ -z "$SSH_AUTH_SOCK" && -S "/run/user/$UID/openssh_agent" ]]; then
     SSH_AUTH_SOCK="/run/user/$UID/openssh_agent" ssh-add -l >/dev/null 2>&1
     (( $? > 1 )) || export SSH_AUTH_SOCK="/run/user/$UID/openssh_agent"
 fi
+# T3 Chat terminal colors and highlighting (light unless `t3-theme dark`); before fastfetch, so it shows in them.
+[[ ! -r "$HOME/.config/shell/t3-chat.sh" ]] || source "$HOME/.config/shell/t3-chat.sh"
 # Show system info once, before the first prompt. Powerlevel10k's instant prompt still has
 # stdout redirected here, so fastfetch would see a pipe and drop its colors: keep them.
 _fastfetch_once() {

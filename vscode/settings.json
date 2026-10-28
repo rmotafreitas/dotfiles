@@ -169,7 +169,6 @@
     "projectKey": "",
   },
   "workbench.colorTheme": "T3 Chat Light",
-  "window.autoDetectColorScheme": true,
   "workbench.preferredLightColorTheme": "T3 Chat Light",
   "workbench.preferredDarkColorTheme": "T3 Chat Dark",
   "cmake.showOptionsMovedNotification": false,

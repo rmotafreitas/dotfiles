@@ -1,6 +1,6 @@
 # Theme
-# T3 Chat (themes/t3-chat), following the system light/dark appearance.
-theme = light:T3 Chat Light,dark:T3 Chat Dark
+# T3 Chat (themes/t3-chat): light by default; `t3-theme dark` in the shell switches to dark.
+theme = T3 Chat Light
 font-family = MesloLGS Nerd Font Mono
 font-size = 14
 background-opacity = 0.92

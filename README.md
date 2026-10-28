@@ -15,7 +15,7 @@ python3 scripts/install.py          # preview; changes nothing
 python3 scripts/install.py --apply  # back up conflicts, then create symlinks
 ```
 
-Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (eight everywhere, the [T3 Chat theme](#t3-chat-theme) files for Ghostty, btop and lazydocker, xfce4-terminal on Linux and Xcode on a Mac, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
+Open a new terminal afterward. The installer manages the configuration files listed in `scripts/install.py` (nine everywhere, the [T3 Chat theme](#t3-chat-theme) files for the shell, Ghostty, btop and lazydocker, xfce4-terminal on Linux and Xcode on a Mac, plus the macOS files on a Mac; `--platform linux|darwin` overrides detection); `--wallpapers` also installs the four wallpaper images. Re-running it is safe. Existing files and symlinks are moved into `~/.local/state/dotfiles/backups/<timestamp>/`. Keep this checkout where it is: the installed files link to it.
 
 An existing `~/.gitconfig` is also copied to `~/.gitconfig.local` if that private file does not exist, preserving identity and credential helpers. On a new machine, set these locally:
 
@@ -31,6 +31,7 @@ The installer does not install packages, fetch plugins, change your login shell,
 | File | Purpose |
 | --- | --- |
 | `.config/shell/toolchain.sh` | Shared toolchain discovery and PATH deduplication |
+| `.config/starship.toml` | Starship prompt in T3 Chat colors |
 | `.config/shell/aliases.sh` | Git, Docker and tmux shortcuts, `bat`/`fd` names on Debian, `killport`, fzf and bat colors |
 | `.zshenv` | Toolchain environment for Zsh, including SSH commands |
 | `.zshrc` | History, optional plugins, prompt, completions, agent reuse and fastfetch on the first prompt |
@@ -130,10 +131,12 @@ then choose what to include and create the profile. The settings use the [T3 Cha
 
 [themes/t3-chat/](themes/t3-chat/) carries T3 Code's built-in **T3 Chat** palette, light and dark, to my other tools. [palette.json](themes/t3-chat/palette.json) holds the colors exactly as T3 Code defines them (OKLCH), and `python3 scripts/t3_chat_theme.py` generates everything else from it; the tests fail if a generated file is out of date.
 
+**Light is the default everywhere.** Run `t3-theme dark` in any shell to switch to dark and `t3-theme light` to switch back; `t3-theme` alone shows the current mode. The choice is saved in `~/.config/t3-chat/mode`, so new shells start in it. The shell recolors the terminal it runs in (xfce4-terminal, Ghostty, Windows Terminal with WSL, tmux panes) and zsh's command highlighting, and updates btop and xfce4-terminal's saved colors. `T3_CHAT_MODE=dark` in `~/.config/shell/local.sh` forces a mode on one machine. VS Code has its own switch.
+
 | Where | How |
 | --- | --- |
-| VS Code (also Cursor and other VS Code forks) | `code --install-extension themes/t3-chat/t3-chat-theme-1.0.0.vsix`. My settings follow the system: T3 Chat Light or T3 Chat Dark. |
-| Ghostty | The installer links the themes into `~/.config/ghostty/themes`; my macOS config switches with the system appearance. |
+| VS Code (also Cursor and other VS Code forks) | `code --install-extension themes/t3-chat/t3-chat-theme-1.0.0.vsix`. My settings select T3 Chat Light; switch with **Ctrl+K Ctrl+T** (⌘K ⌘T on a Mac), or set `"window.autoDetectColorScheme": true` to follow the system. Its terminal follows the VS Code theme. |
+| Ghostty | The installer links the themes into `~/.config/ghostty/themes`; my macOS config starts in T3 Chat Light and `t3-theme` switches it. |
 | xfce4-terminal | **Preferences → Colors → Presets**: T3 Chat Light or T3 Chat Dark. |
 | btop | **Esc → Options → color theme**, or `color_theme = "t3-chat-dark"` in `~/.config/btop/btop.conf`. |
 | JetBrains IDEs (DataGrip, Android Studio, IntelliJ) | **Settings → Plugins → ⚙ → Install Plugin from Disk…** → `themes/t3-chat/jetbrains/t3-chat-theme-1.0.0.jar`, then pick T3 Chat Light or Dark under **Appearance → Theme**. It themes the whole IDE and the editor. For the editor only: **Editor → Color Scheme → ⚙ → Import Scheme…** → a `.icls` file. |
@@ -141,7 +144,7 @@ then choose what to include and create the profile. The settings use the [T3 Cha
 | Windows Terminal (also WSL) | Copy the fragment and set the default scheme, see [Windows](#windows) below. |
 | Notepad++ | See [Windows](#windows) below. |
 | lazydocker | The installer links its config: pink active border and readable selection in both modes. Docker Desktop only offers light, dark or system. |
-| tmux, fzf, bat | Automatic: the pink accent in tmux and fzf works in both modes, and bat uses the terminal's colors. |
+| zsh, Starship, tmux, fzf, bat | Automatic: zsh highlighting follows `t3-theme`, the pink accent in the Starship prompt, tmux and fzf works in both modes, and bat uses the terminal's colors. |
 | T3 Code | Built in: **Settings → Appearance → T3 Chat**. |
 
 Without a clone, download the extension from `https://raw.githubusercontent.com/rmotafreitas/dotfiles/main/themes/t3-chat/t3-chat-theme-1.0.0.vsix` and install it with `code --install-extension`.
@@ -165,11 +168,13 @@ Copy-Item themes\t3-chat\windows-terminal\t3-chat.json $fragments
 Copy-Item "themes\t3-chat\notepad-plus-plus\T3 Chat *.xml" "$env:APPDATA\Notepad++\themes\"
 ```
 
-Then in Windows Terminal's **Settings → Open JSON file**, make every profile, WSL Ubuntu included, follow the Windows light/dark setting:
+Then in Windows Terminal's **Settings → Open JSON file**, give every profile, WSL Ubuntu included, the light scheme:
 
 ```json
-"profiles": { "defaults": { "colorScheme": { "light": "T3 Chat Light", "dark": "T3 Chat Dark" } } }
+"profiles": { "defaults": { "colorScheme": "T3 Chat Light" } }
 ```
+
+Inside WSL, `t3-theme dark` switches that tab to dark. To have Windows Terminal follow the Windows light/dark setting instead, use `"colorScheme": { "light": "T3 Chat Light", "dark": "T3 Chat Dark" }`.
 
 In Notepad++, choose the theme in **Settings → Style Configurator… → Select theme**; with T3 Chat Dark also turn on **Settings → Preferences → Dark Mode** so the menus match.
 

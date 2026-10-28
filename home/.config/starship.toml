@@ -1,0 +1,26 @@
+# Starship prompt in T3 Chat colors. The pink accent reads on light and dark backgrounds; the rest
+# uses the terminal's own colors, so the prompt follows `t3-theme light|dark`.
+"$schema" = "https://starship.rs/config-schema.json"
+
+[character]
+success_symbol = "[❯](bold #db2777)"
+error_symbol = "[❯](bold red)"
+vimcmd_symbol = "[❮](bold #db2777)"
+
+[directory]
+style = "bold #db2777"
+
+[username]
+style_user = "bold purple"
+
+[hostname]
+style = "bold purple"
+
+[git_branch]
+style = "bold purple"
+
+[git_status]
+style = "bold red"
+
+[cmd_duration]
+style = "bold yellow"
