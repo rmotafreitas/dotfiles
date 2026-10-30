@@ -1,0 +1,4 @@
+interface:
+  display_name: "Revisão PT-PT"
+  short_description: "Correct European Portuguese spelling, grammar and academic register"
+  default_prompt: "Use $revisao-pt-pt to review the Portuguese in the files I changed."

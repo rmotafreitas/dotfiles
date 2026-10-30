@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""abs-check: check the dissertation's abstracts against formato.txt.
+
+  abs-check [--report report] [--formato FILE] [--sem-alargado]
+
+Checks three texts:
+  Resumo        \\begin{abstract} in report/frontmatter/frontmatter.tex (PT-PT)
+  Abstract      \\begin{abstractotherlanguage} in the same file (en-GB)
+  Alargado      the extended abstract (file and format from formato.txt)
+
+Findings: "location: LEVEL [RULE] message".
+  MISSING (error)         abstract missing or empty
+  TODO (error)            \\todo{} left in an abstract
+  FORBIDDEN-CMD (error)   \\cite, \\gls/\\acr*, \\ref, \\footnote, \\url in the
+                          Resumo/Abstract (they must stand alone); \\gls/\\acr*
+                          in the extended abstract (no list of acronyms there)
+  WORDS (error/warn)      over the word limit (error) or very short (warn)
+  KEYWORDS (error)        more than the allowed keywords, missing English
+                          «Keywords:» line, or PT/EN counts differ
+  NUMBER (warn)           a number in an abstract that does not appear in the
+                          report chapters (possible invented or stale figure)
+  PARITY (warn)           Resumo and Abstract differ in their numbers, or their
+                          lengths differ a lot (EN/PT words outside 0.7–1.4)
+  SECTIONS (error)        extended abstract lacks a required \\section, or the
+                          order differs from formato.txt
+  PAGES (error)           extended abstract body longer than allowed (needs the
+                          built PDF: report/resumo-alargado.pdf)
+  STALE (warn)            built PDF older than its .tex or .bib: pages not checked
+
+Exit codes: 0 clean; 3 warnings only; 1 errors; 2 bad input. Local only.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+FORBIDDEN = re.compile(r"\\(?:[A-Za-z]*cite[a-z]*|[Gg]ls[a-z]*|[Aa]cr[a-z]*|ac[slf]?p?|(?:auto|c|C|eq|page)?ref|footnote|url|href)\b")
+GLS_ONLY = re.compile(r"\\(?:[Gg]ls[a-z]*|[Aa]cr[a-z]*)\b")
+KEEP_ARG = ("textit", "emph", "textbf", "enquote", "textsc", "mbox", "text")
+
+
+def load_cfg(path: str) -> dict:
+    cfg = {}
+    for line in open(path, encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if "=" in line:
+            k, v = line.split("=", 1)
+            cfg[k.strip()] = v.strip()
+    return cfg
+
+
+def strip_comments(t: str) -> str:
+    return re.sub(r"(?<!\\)%[^\n]*", "", t)
+
+
+def env_body(text: str, env: str):
+    m = re.search(r"\\begin\{" + re.escape(env) + r"\}(.*?)\\end\{" + re.escape(env) + r"\}", text, re.S)
+    return (m.group(1), text.count("\n", 0, m.start(1)) + 1) if m else (None, 0)
+
+
+def plain(latex: str) -> str:
+    t = strip_comments(latex)
+    t = re.sub(r"\\(?:begin|end)\{[^}]*\}(?:\{[^}]*\})?", " ", t)  # \begin{otherlanguage}{british} is not text
+    t = re.sub(r"\\(?:" + "|".join(KEEP_ARG) + r")\s*\{", "{", t)
+    t = re.sub(r"\\(?:[A-Za-z]*cite[a-z]*|ref|label|url)\s*(?:\[[^\]]*\])*\{[^}]*\}", "", t)
+    t = t.replace("\\%", "%").replace("~", " ").replace("\\,", "").replace("--", "–")
+    t = re.sub(r"\\[A-Za-z]+\*?", " ", t)
+    t = re.sub(r"[{}]", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def words(t: str) -> int:
+    return len(re.findall(r"[^\W\d_][\w’'-]*|\d[\d.,]*", t))
+
+
+def numbers(t: str) -> set[str]:
+    """Normalised numbers (thousands separators removed, decimal comma -> point)."""
+    out = set()
+    # a separator counts only between digits: «1, 2» and «2025, 28%» are separate values
+    for m in re.finditer(r"(?<![\w/])(?:\d{1,3}(?:[ \u2009\u202f]\d{3}(?!\d))+(?:[.,]\d+)?|\d+(?:[.,]\d+)*)", t):
+        n = re.sub(r"\s", "", m.group(0))
+        if re.fullmatch(r"\d{4}", n) and 1900 <= int(n) <= 2100:
+            continue  # years are context, not figures
+        n = re.sub(r"(?<=\d)[.,](?=\d{3}(?:\D|$))", "", n)  # 7.502 / 7,502 / 7 502 -> 7502
+        out.add(n.replace(",", "."))
+    return out
+
+
+def report_numbers(report: str) -> set[str]:
+    nums = set()
+    for root, dirs, files in os.walk(report):
+        dirs[:] = [d for d in dirs if not d.startswith("build") and d not in ("reference", "frontmatter")]
+        for f in files:
+            if f.endswith(".tex") and f not in ("main.tex", "resumo-alargado.tex"):
+                nums |= numbers(plain(open(os.path.join(root, f), encoding="utf-8").read()))
+    return nums
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("--report", default="report")
+    ap.add_argument("--formato", default=os.path.join(HERE, "..", "formato.txt"))
+    ap.add_argument("--sem-alargado", action="store_true", help="skip the extended abstract")
+    args = ap.parse_args()
+    front = os.path.join(args.report, "frontmatter", "frontmatter.tex")
+    main_tex = os.path.join(args.report, "main.tex")
+    if not (os.path.exists(front) and os.path.exists(main_tex)):
+        print(f"abs-check: {front} or {main_tex} not found", file=sys.stderr)
+        return 2
+    try:
+        cfg = load_cfg(args.formato)
+    except (OSError, UnicodeDecodeError, ValueError) as err:
+        print(f"abs-check: cannot read {args.formato}: {err}", file=sys.stderr)
+        return 2
+    out = []
+
+    def add(level, where, rule, msg):
+        out.append((level, where, rule, msg))
+
+    ftext = open(front, encoding="utf-8").read()
+    known = report_numbers(args.report)
+    texts = {}
+    for env, label, maxkey, minkey in (("abstract", "Resumo", "resumo max palavras", "resumo min palavras"),
+                                       ("abstractotherlanguage", "Abstract", "abstract max palavras",
+                                        "abstract min palavras")):
+        body, line = env_body(ftext, env)
+        where = f"{os.path.relpath(front)}:{line}"
+        if body is None or not plain(body):
+            add("error", where, "MISSING", f"{label} is missing or empty")
+            continue
+        code = strip_comments(body)
+        if re.search(r"\\todo\b", code):
+            add("error", where, "TODO", f"{label} still has a \\todo{{}}")
+        for m in FORBIDDEN.finditer(code):
+            add("error", where, "FORBIDDEN-CMD", f"«{m.group(0)}» in the {label}: abstracts must stand alone")
+        text = plain(re.sub(r"(?s)\\textbf\{Keywords:?\}.*$|\{\\bf Keywords:?\}.*$|Keywords:.*$", "", code))
+        texts[label] = text
+        n, mx = words(text), int(cfg.get(maxkey, 200))
+        if n > mx:
+            add("error", where, "WORDS", f"{label}: {n} words (max {mx})")
+        elif n < int(cfg.get(minkey, 100)):
+            add("warn", where, "WORDS", f"{label}: only {n} words")
+        for num in sorted(numbers(text) - known):
+            add("warn", where, "NUMBER", f"{label}: «{num}» does not appear in the report chapters")
+
+    # keywords
+    kw_pt = re.search(r"\\keywords\{([^}]*)\}", strip_comments(open(main_tex, encoding="utf-8").read()))
+    n_pt = len([k for k in (kw_pt.group(1).split(",") if kw_pt else []) if k.strip()])
+    kmax = int(cfg.get("keywords max", 6))
+    if not kw_pt or n_pt == 0:
+        add("error", main_tex, "KEYWORDS", "\\keywords{...} missing in main.tex")
+    elif n_pt > kmax:
+        add("error", main_tex, "KEYWORDS", f"{n_pt} keywords (max {kmax})")
+    body_en, line_en = env_body(ftext, "abstractotherlanguage")
+    m_en = re.search(r"Keywords:?\}?\s*(.+?)\s*(?:\\par|$)", strip_comments(body_en or ""), re.S)
+    n_en = len([k for k in plain(m_en.group(1)).split(",") if k.strip()]) if m_en else 0
+    if not m_en:
+        add("error", f"{os.path.relpath(front)}:{line_en}", "KEYWORDS", "English «Keywords:» line missing in the Abstract")
+    elif n_en != n_pt:
+        add("error", f"{os.path.relpath(front)}:{line_en}", "KEYWORDS", f"{n_en} English keywords vs {n_pt} in Portuguese")
+
+    # parity
+    if "Resumo" in texts and "Abstract" in texts:
+        a, b = numbers(texts["Resumo"]), numbers(texts["Abstract"])
+        if a != b:
+            add("warn", os.path.relpath(front), "PARITY",
+                f"numbers differ: only in Resumo {sorted(a - b)}, only in Abstract {sorted(b - a)}")
+        wp, we = words(texts["Resumo"]), words(texts["Abstract"])
+        if wp and not 0.7 <= we / wp <= 1.4:
+            add("warn", os.path.relpath(front), "PARITY", f"lengths differ a lot: Resumo {wp} words, Abstract {we}")
+
+    # extended abstract
+    if not args.sem_alargado:
+        path = cfg.get("alargado ficheiro", "report/resumo-alargado.tex")
+        if not os.path.isabs(path):  # relative to the repo root (the parent of --report)
+            path = os.path.relpath(os.path.join(os.path.dirname(os.path.abspath(args.report)), path))
+        if not os.path.exists(path):
+            add("error", path, "MISSING", "extended abstract file not found")
+        else:
+            src = strip_comments(open(path, encoding="utf-8").read())
+            doc = re.search(r"\\begin\{document\}(.*?)(?:\\printbibliography|\\end\{document\})", src, re.S)
+            body = doc.group(1) if doc else ""
+            if re.search(r"\\todo\b", body):
+                add("error", path, "TODO", "extended abstract still has a \\todo{}")
+            for m in GLS_ONLY.finditer(body):
+                add("error", path, "FORBIDDEN-CMD", f"«{m.group(0)}» in the extended abstract: write acronyms in full on first use")
+            secs = [plain(s) for s in re.findall(r"\\section\*?\{([^}]*)\}", body)]
+            want = [s.strip() for s in cfg.get("alargado seccoes", "").split("|") if s.strip()]
+            missing = [s for s in want if s not in secs]
+            if missing:
+                add("error", path, "SECTIONS", f"missing sections: {missing}")
+            elif [s for s in secs if s in want] != want:
+                add("error", path, "SECTIONS", f"sections out of order: {secs}")
+            first_sec = re.search(r"\\section\*?\{", body)
+            body_text = body[first_sec.start():] if first_sec else body  # skip the title block
+            text = plain(re.sub(r"\\section\*?\{[^}]*\}", " ", body_text))
+            n, mx = words(text), int(cfg.get("alargado max palavras", 1000))
+            if n > mx:
+                add("error", path, "WORDS", f"extended abstract: {n} words (max {mx})")
+            elif n < mx // 2:
+                add("warn", path, "WORDS", f"extended abstract: only {n} words (target ≈ {mx})")
+            for num in sorted(numbers(text) - known):
+                add("warn", path, "NUMBER", f"extended abstract: «{num}» does not appear in the report chapters")
+            pdf = os.path.splitext(path)[0] + ".pdf"
+            sources = [path] + [os.path.join(os.path.dirname(path), b)
+                                for b in re.findall(r"\\addbibresource\{([^}]*)\}", src)]
+            newest = max(os.path.getmtime(f) for f in sources if os.path.exists(f))
+            if os.path.exists(pdf) and os.path.getmtime(pdf) < newest:
+                add("warn", pdf, "STALE", "PDF older than its source: rebuild (make docker-resumo-alargado)")
+            elif os.path.exists(pdf) and shutil.which("pdftotext"):
+                p = subprocess.run(["pdftotext", "-layout", pdf, "-"], capture_output=True, text=True)
+                if p.returncode != 0:
+                    print(f"abs-check: pdftotext failed on {pdf}: {p.stderr.strip()}", file=sys.stderr)
+                    return 2
+                pages = p.stdout.split("\f")
+                ref_page = next((i + 1 for i, pg in enumerate(pages)
+                                 if re.search(r"^\s*(References|Referências|Bibliography)\s*$", pg, re.M)), None)
+                if ref_page:
+                    pg = pages[ref_page - 1]
+                    before = pg[:re.search(r"^\s*(References|Referências|Bibliography)\s*$", pg, re.M).start()]
+                    # the references page counts as body if any body text (not the page number) precedes the heading
+                    body_pages = ref_page if words(re.sub(r"^\s*\d+\s*$", "", before, flags=re.M)) else ref_page - 1
+                else:
+                    body_pages = len([pg for pg in pages if pg.strip()])
+                mp = int(cfg.get("alargado max paginas", 2))
+                if body_pages > mp:
+                    add("error", pdf, "PAGES", f"extended abstract body runs to page {body_pages} (max {mp})")
+            else:
+                add("info", path, "PAGES", "built PDF not found: page limit not checked (make docker-resumo-alargado)")
+            if "confirmar" in cfg.get("alargado fonte", ""):
+                add("info", os.path.relpath(os.path.normpath(args.formato)), "FORMAT", "extended abstract format is the provisional default: confirm it")
+
+    rank = {"error": 0, "warn": 1, "info": 2}
+    for level, where, rule, msg in sorted(out, key=lambda f: rank[f[0]]):
+        print(f"{where}: {level} [{rule}] {msg}")
+    c = {lv: sum(1 for f in out if f[0] == lv) for lv in rank}
+    print(f"# abstracts: {c['error']} error(s), {c['warn']} warning(s), {c['info']} info", file=sys.stderr)
+    return 1 if c["error"] else 3 if c["warn"] else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)

@@ -1,0 +1,538 @@
+#!/usr/bin/env python3
+"""fmt-check: check that the dissertation keeps the official TMDEI formatting.
+
+  fmt-check [--report report] [--pdf report/main.pdf] [--build report/build]
+            [--formato impressao|digital] [--sem-pdf]
+
+Four sources:
+  template   report/tmdei-style.cls and .latexmkrc against the pinned upstream
+             hashes; \\documentclass options in main.tex; layout-changing
+             commands in the .tex files (margins, spacing, font size, page style).
+  log        <build>/main.log: LaTeX errors, undefined references/citations,
+             overfull/underfull boxes, floats that do not fit.
+  pdf        page size, embedded fonts, metadata, text outside the margins
+             (odd/even pages), blank pages, page numbers in the outer header.
+  toc        <build>/main.toc + PDF: headings left at the bottom of a page.
+
+Findings: "location: LEVEL [RULE] message". Rules (level):
+  TEMPLATE-CHANGED (error)   class file or .latexmkrc differs from the template
+  CLASS-OPTION (error)       option not allowed in \\documentclass (oneside,
+                             headsepline, 12pt, onehalfspacing, ...); use the
+                             build variants instead
+  LAYOUT-CMD (error/warn)    \\geometry, \\setlength{\\textwidth|\\parskip}, \\linespread,
+                             KOMA-Script layout commands (\\KOMAoptions, \\areaset,
+                             \\setkomafont, ...), \\PassOptionsToClass{..}{tmdei-style}
+                             outside the two variant hooks (error); manual page breaks,
+                             \\enlargethispage, negative \\vspace, \\pagestyle (warn).
+                             A warning line ending in «% formatacao: <reason>» is
+                             exempt (info EXEMPT); errors can never be exempted
+  EMPTY-LIST (error)         \\listoffigures/\\listoftables/... active with nothing to
+                             list (guide §2.6: remove or comment the command)
+  LATEX-ERROR (error)        "! ..." in the log
+  UNDEFINED-REF (error)      undefined reference or citation, or "Rerun" pending
+  OVERFULL (error > 5pt, warn > 1pt)  text sticking into the margin
+  UNDERFULL (info)           badly spaced line (badness 10000)
+  FLOAT (warn/info)          float too large for the page (warn); float specifier
+                             changed by LaTeX (info). Floats drifting to the end of a
+                             chapter are not detected: look at the pages
+  PAGE-SIZE (error)          not A4
+  FONTS (error)              font not embedded (printers and repositories reject it)
+  METADATA (warn)            PDF title or author missing
+  MARGIN (error)             text outside the text block on a page (> 1 mm)
+  CHAPTER-PARITY (error)     two-sided: a chapter-level unit starts on an even page
+                             (openright lost)
+  BLANK-PAGE (warn)          blank page that does not precede a chapter-level
+                             start on an odd page (two-sided), or any blank page
+                             (one-sided)
+  PAGE-NUMBER (warn)         page without a number in the outer header corner
+  HEADING-AT-BOTTOM (warn)   heading with less than ~2 lines of text after it
+                             at the bottom of the page
+
+Exit codes: 0 clean; 3 warnings only; 1 errors; 2 bad input (missing files or
+tools). Needs poppler-utils (pdfinfo, pdftotext, pdffonts) for the PDF checks;
+--sem-pdf runs only the template and log checks. Everything runs locally.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+CM = 72 / 2.54          # points per cm
+TOL = 1 * CM / 10       # 1 mm tolerance
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+LAYOUT_ERROR = [
+    (r"\\(?:new|restore)?geometry\b", "\\geometry changes the template margins"),
+    (r"\\usepackage(?:\[[^\]]*\])?\{geometry\}", "geometry is already configured by the class"),
+    (r"\\setlength\s*\{?\\(?:textwidth|textheight|oddsidemargin|evensidemargin|topmargin|"
+     r"headheight|headsep|footskip|marginparwidth|hoffset|voffset)\b", "changes the page layout"),
+    (r"\\addtolength\s*\{?\\(?:textwidth|textheight|oddsidemargin|evensidemargin|topmargin)\b",
+     "changes the page layout"),
+    (r"\\linespread\b|\\setstretch\b|\\renewcommand\s*\{?\\baselinestretch|\\(?:onehalf|double)spacing\b",
+     "changes line spacing (the template uses single spacing)"),
+    (r"\\usepackage(?:\[[^\]]*\])?\{(?:fullpage|anysize|vmargin|setspace|titlesec|fancyhdr)\}",
+     "package that overrides the template layout"),
+    (r"\\renewcommand\s*\{?\\(?:familydefault|rmdefault|sfdefault)\b|\\fontsize\s*\{",
+     "changes the document font"),
+    (r"\\KOMAoptions?\b|\\typearea\b|\\areaset\b|\\recalctypearea\b|\\(?:set|addto)komafont\b|"
+     r"\\RedeclareSectionCommands?\b|\\(?:Declare|Redeclare)SectionCommand\b",
+     "KOMA-Script command that changes the template layout"),
+    (r"\\setlength\s*\{?\\(?:parskip|parindent)\b", "changes paragraph spacing (template uses parskip)"),
+    (r"\\renewcommand\s*\*?\s*\{?\\(?:cleardoublepage|chapterpagestyle|chaptermark|sectionmark)\b",
+     "changes how chapters start or the running headers"),
+]
+# the only allowed \PassOptionsToClass: these exact build-variant hooks, in main.tex
+VARIANT_HOOKS = [
+    re.compile(r"\\ifdefined\s*\\versaodigital\s*(\\PassOptionsToClass\s*\{\s*oneside\s*\}\s*\{\s*tmdei-style\s*\})\s*\\fi"),
+    re.compile(r"\\ifdefined\s*\\linhacabecalho\s*(\\PassOptionsToClass\s*\{\s*headsepline\s*\}\s*\{\s*tmdei-style\s*\})\s*\\fi"),
+]
+LAYOUT_WARN = [
+    (r"\\(?:newpage|clearpage|cleardoublepage|pagebreak|newline\s*\\newline)\b",
+     "manual page break: let the template decide (only for a justified case)"),
+    (r"\\enlargethispage\b", "squeezes the page"),
+    (r"\\vspace\*?\s*\{\s*-", "negative \\vspace squeezes the layout"),
+    (r"\\(?:this)?pagestyle\s*\{", "page style is set by the template"),
+]
+
+
+EXEMPT_RE = re.compile(r"%\s*formatacao\s*:\s*(\S.*)$")
+
+
+class BadInput(Exception):
+    pass
+
+
+def run(cmd: list[str]) -> str:
+    p = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        raise BadInput(f"{cmd[0]} failed on {cmd[-2] if cmd[-1] == '-' else cmd[-1]}: {p.stderr.strip()[:200]}")
+    return p.stdout
+
+
+def strip_comments(text: str) -> str:
+    return re.sub(r"(?<!\\)%[^\n]*", "", text)
+
+
+def load_reference(path: str) -> dict:
+    ref = {}
+    for line in open(path, encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if "=" in line:
+            k, v = line.split("=", 1)
+            ref[k.strip()] = v.strip()
+    return ref
+
+
+# ----------------------------------------------------------------- template
+def check_template(report: str, ref: dict, add):
+    for name in ("tmdei-style.cls", ".latexmkrc"):
+        path = os.path.join(report, name)
+        want = ref.get(f"sha256 {name}")
+        if not os.path.exists(path):
+            add("error", path, "TEMPLATE-CHANGED", f"{name} is missing")
+            continue
+        got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        if want and got != want:
+            add("error", path, "TEMPLATE-CHANGED",
+                f"{name} differs from the template (commit {ref.get('commit', '?')[:7]}); "
+                "do not edit it — see SKILL.md")
+    main = os.path.join(report, "main.tex")
+    text = open(main, encoding="utf-8").read()
+    m = re.search(r"\\documentclass\s*\[(.*?)\]\s*\{tmdei-style\}", strip_comments(text), re.S)
+    if not m:
+        add("error", main, "CLASS-OPTION", "\\documentclass[...]{tmdei-style} not found")
+    else:
+        opts = {o.strip() for o in m.group(1).split(",") if o.strip()}
+        required = set(ref.get("opcoes obrigatorias", "").split())
+        langs = set(ref.get("opcoes lingua", "").split())
+        for o in sorted(required - opts):
+            add("error", main, "CLASS-OPTION", f"required option «{o}» missing")
+        chosen = opts & langs
+        if len(chosen) != 1:
+            add("error", main, "CLASS-OPTION", f"exactly one language option expected, found {sorted(chosen) or 'none'}")
+        for o in sorted(opts - required - langs):
+            add("error", main, "CLASS-OPTION",
+                f"option «{o}» changes the template layout; use the build variants "
+                "(FORMATO=digital for one-sided, LINHA=1 for the header rule)")
+    # layout commands in any .tex under report (the class file is checked by hash)
+    for root, dirs, files in os.walk(report):
+        dirs[:] = [d for d in dirs if not d.startswith("build") and d != "reference"]
+        for f in files:
+            if not f.endswith(".tex"):
+                continue
+            path = os.path.join(root, f)
+            raw = open(path, encoding="utf-8").read()
+            if standalone(path, raw):
+                continue
+            raw_lines = raw.split("\n")
+            body = strip_comments(raw)
+            for level, patterns in (("error", LAYOUT_ERROR), ("warn", LAYOUT_WARN)):
+                for pat, why in patterns:
+                    for mm in re.finditer(pat, body):
+                        line = body.count("\n", 0, mm.start()) + 1
+                        where = f"{os.path.relpath(path)}:{line}"
+                        ex = EXEMPT_RE.search(raw_lines[line - 1])
+                        if ex and level == "warn":  # errors can never be exempted
+                            add("info", where, "EXEMPT", f"«{mm.group(0).strip()}» exempt: {ex.group(1).strip()}")
+                            continue
+                        add(level, where, "LAYOUT-CMD", f"«{mm.group(0).strip()}»: {why}")
+            allowed = set()
+            if os.path.abspath(path) == os.path.abspath(os.path.join(report, "main.tex")):
+                for hook in VARIANT_HOOKS:
+                    allowed |= {h.start(1) for h in hook.finditer(body)}
+            for mm in re.finditer(r"\\PassOptionsToClass\s*\{[^}]*\}\s*\{\s*tmdei-style\s*\}", body):
+                line = body.count("\n", 0, mm.start()) + 1
+                if mm.start() not in allowed:
+                    add("error", f"{os.path.relpath(path)}:{line}", "LAYOUT-CMD",
+                        f"«{mm.group(0)}»: passes a class option outside the build variants")
+
+
+# ----------------------------------------------------------------- log
+def check_log(build: str, add, report: str = "."):
+    log = os.path.join(build, "main.log")
+    if not os.path.exists(log):
+        raise BadInput(f"no {log}: build the PDF first (make docker ...)")
+    text = open(log, encoding="latin-1").read()
+    # source file: the file LaTeX has open at this point of the log. LaTeX writes
+    # "(file" when it opens a file and ")" when it closes it; replay that stack.
+    # every "(" is pushed (file name or None) so that ordinary parentheses in
+    # messages, e.g. "(preloaded format=...)", keep the stack balanced
+    events = [(m.start(), m.group(0)[0], m.group(1)) for m in re.finditer(r"\(([^\s()]*)|\)", text)]
+    FILE_RE = re.compile(r"\.?/?[^\s()]+\.[A-Za-z]{2,4}$")
+
+    def source_has(name: str, line: int, snippet: str) -> bool:
+        """Does `name` (relative to the report dir) have `line`, with the
+        snippet's first word near it?"""
+        path = os.path.join(report, name.lstrip("./"))
+        try:
+            lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+        except OSError:
+            return False
+        if line > len(lines):
+            return False
+        word = next((w for w in re.findall(r"[^\W\d_]{3,}", snippet)), "")
+        return not word or word.split("-")[0] in " ".join(lines[max(0, line - 2): line + 1])
+
+    def file_at(pos: int, line: int = 0, snippet: str = "") -> str:
+        stack, last_closed, last_pos = [], None, -1
+        for p, kind, name in events:
+            if p >= pos:
+                break
+            if kind == "(":
+                stack.append(name if name and FILE_RE.match(name) else None)
+                last_closed = None
+            elif stack:
+                last_closed, last_pos = stack.pop(), p
+        # LaTeX finishes the last paragraph of an \input file after closing it:
+        # a warning right after ")" belongs to the file that was just closed
+        if last_closed and not text[last_pos + 1:pos].strip() and \
+                (not line or source_has(last_closed, line, snippet)):
+            return last_closed.lstrip("./")
+        for name in reversed(stack):
+            if name and name.endswith((".tex", ".acr", ".gls", ".bbl", ".toc", ".lof", ".lot")) \
+                    and not name.endswith("main.tex"):
+                return name.lstrip("./")
+        return "main.tex"
+
+    def page_at(pos: int) -> str:  # kept for messages without line numbers
+        return file_at(pos)
+    for m in re.finditer(r"^! (.*)$", text, re.M):
+        add("error", f"{os.path.relpath(log)} (≈{file_at(m.start())})", "LATEX-ERROR", m.group(1)[:120])
+    unwrapped = re.sub(r"(?m)^([^\n]{79})\n", r"\1", text)  # TeX wraps log lines at 79 characters
+    for m in re.finditer(r"(LaTeX|Package \w+) Warning: (.*?(?:undefined|Rerun to get).*?)(?:\.|\n)", unwrapped):
+        add("error", os.path.relpath(log), "UNDEFINED-REF", re.sub(r"\s+", " ", m.group(2))[:140])
+    for m in re.finditer(r"^Overfull \\hbox \(([\d.]+)pt too wide\) (?:in paragraph|detected) at lines? (\d+)(?:--(\d+))?\n?(.*)$",
+                         text, re.M):
+        pts = float(m.group(1))
+        if pts <= 1.0:
+            continue
+        level = "error" if pts > 5 else "warn"
+        snippet = re.sub(r"\\[A-Za-z0-9/]+\S*\s?|[\[\]]", "", m.group(4))[:70]
+        add(level, f"≈{file_at(m.start(), int(m.group(2)), snippet)}:{m.group(2)}", "OVERFULL",
+            f"{pts:.1f}pt into the margin: «{snippet.strip()}»")
+    for m in re.finditer(r"^Overfull \\vbox \(([\d.]+)pt too high\)", text, re.M):
+        if float(m.group(1)) > 1.0:
+            add("warn", f"≈{file_at(m.start())}", "OVERFULL", f"page content {m.group(1)}pt too high")
+    for m in re.finditer(r"^Underfull \\hbox \(badness 10000\) in paragraph at lines (\d+)--(\d+)\n?(.*)$",
+                         text, re.M):
+        snippet = re.sub(r"\\[A-Za-z0-9/]+\S*\s?|[\[\]|]", "", m.group(3))[:60].strip()
+        if snippet:
+            add("info", f"≈{file_at(m.start(), int(m.group(1)), snippet)}:{m.group(1)}", "UNDERFULL",
+                f"badly spaced line: «{snippet}»")
+    for m in re.finditer(r"LaTeX Warning: (Float too large for page.*?|.*float specifier changed to.*?)(?:\.|\n)", text):
+        add("warn" if "too large" in m.group(1) else "info", os.path.relpath(log), "FLOAT", m.group(1)[:120])
+
+
+# ----------------------------------------------------------------- lists
+LISTS = {"listoffigures": "lof", "listoftables": "lot", "listofalgorithms": "loa",
+         "lstlistoflistings": "lol"}
+
+
+def standalone(path: str, raw: str) -> bool:
+    """Another document in report/ (e.g. resumo-alargado.tex): not part of main.pdf."""
+    return os.path.basename(path) != "main.tex" and bool(re.search(r"^\s*\\documentclass", raw, re.M))
+
+
+def check_lists(report: str, build: str, add):
+    """Guide §2.6: a list command must be removed when there is nothing to list."""
+    for root, dirs, files in os.walk(report):
+        dirs[:] = [d for d in dirs if not d.startswith("build") and d != "reference"]
+        for f in files:
+            if not f.endswith(".tex"):
+                continue
+            path = os.path.join(root, f)
+            raw = open(path, encoding="utf-8").read()
+            if standalone(path, raw):
+                continue
+            body = strip_comments(raw)
+            for cmd, ext in LISTS.items():
+                for mm in re.finditer(r"\\" + cmd + r"\b", body):
+                    aux = os.path.join(build, "main." + ext)
+                    line = body.count("\n", 0, mm.start()) + 1
+                    if not os.path.exists(aux):
+                        add("info", f"{os.path.relpath(path)}:{line}", "EMPTY-LIST",
+                            f"cannot check \\{cmd}: {aux} not found (incomplete build directory)")
+                        continue
+                    entries = open(aux, encoding="utf-8", errors="replace").read().count("\\contentsline")
+                    if entries == 0:
+                        line = body.count("\n", 0, mm.start()) + 1
+                        add("error", f"{os.path.relpath(path)}:{line}", "EMPTY-LIST",
+                            f"\\{cmd} prints an empty list: comment it until there is something to list (guide §2.6)")
+
+
+# ----------------------------------------------------------------- pdf
+def parse_pages(pdf: str):
+    html = run(["pdftotext", "-bbox", pdf, "-"])
+    pages = []
+    for w, h, body in re.findall(r'<page width="([\d.]+)" height="([\d.]+)">(.*?)</page>', html, re.S):
+        words = [(float(a), float(b), float(c), float(d), t) for a, b, c, d, t in
+                 re.findall(r'xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<', body)]
+        pages.append((float(w), float(h), words))
+    return pages
+
+
+ROMAN_OR_NUM = re.compile(r"^(?:\d+|[ivxlcdm]+)$")
+
+
+FRONT_TITLES = {"Resumo", "Abstract", "Índice", "Contents", "Declaração de Integridade",
+                "Agradecimentos", "Acknowledgement", "Acknowledgements", "Dedicatória", "Dedicatory",
+                "Lista de Figuras", "Lista de Tabelas", "Lista de Acrónimos", "Lista de Algoritmos",
+                "Lista de Código", "Lista de Símbolos", "List of Figures", "List of Tables",
+                "List of Acronyms", "List of Algorithms", "List of Source Code", "List of Symbols",
+                "Bibliografia", "Bibliography", "Glossário", "Glossary"}
+# the chapter label is alone on its line in the PDF («Capítulo 1», then the title)
+CHAPTER_LABEL = re.compile(r"^(Capítulo|Chapter|Apêndice|Appendix|Anexo)\s+[\dA-Z]+$")
+
+
+def norm(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"\\[A-Za-z]+\*?|[{}\\]", "", s)).strip()
+
+
+def check_pdf(pdf: str, build: str, formato: str, ref: dict, add):
+    info = run(["pdfinfo", pdf])
+    for field in ("Title", "Author"):
+        m = re.search(rf"^{field}:\s*(.*)$", info, re.M)
+        if not m or not m.group(1).strip():
+            add("warn", pdf, "METADATA", f"PDF {field.lower()} is empty")
+    fonts = run(["pdffonts", pdf]).splitlines()[2:]
+    for line in fonts:
+        cols = line.split()
+        # columns: name type [encoding...] emb sub uni object ID
+        if len(cols) >= 7 and cols[-5] == "no":
+            add("error", pdf, "FONTS", f"font not embedded: {cols[0]}")
+
+    inner = float(ref.get("margem interior", 3.5)) * CM
+    outer = float(ref.get("margem exterior", 2.6)) * CM
+    top = float(ref.get("margem superior", 3.5)) * CM
+    bottom = float(ref.get("margem inferior", 2.5)) * CM
+    pages = parse_pages(pdf)
+    if not pages:
+        raise BadInput(f"no pages could be read from {pdf}")
+    twoside = formato == "impressao"
+    for n, (w, h, _) in enumerate(pages, 1):
+        if not (abs(w - 595.28) < 2 and abs(h - 841.89) < 2):
+            add("error", f"{pdf} p. {n}", "PAGE-SIZE", f"page size {w:.0f}x{h:.0f} pt is not A4")
+
+    # chapter-level titles (from the table of contents) for the blank-page rule
+    toc = os.path.join(build, "main.toc")
+    toc_text = open(toc, encoding="utf-8", errors="replace").read() if os.path.exists(toc) else ""
+    chapter_titles = [norm(re.sub(r"\\numberline \{[^}]*\}", "", m.group(1)))
+                      for m in re.finditer(r"\\contentsline \{chapter\}\{(.*?)\}\{[\divxlc]+\}", toc_text)]
+
+    # body-text height of the whole document: a page with only a chapter title has no body of its own
+    all_heights = sorted(x[3] - x[1] for _, _, ws in pages for x in ws if x[1] >= top - 0.5 * CM)
+    body_median = all_heights[len(all_heights) // 2] if all_heights else 0
+
+    def starts_chapter(words) -> bool:
+        """The first line of the text block is exactly a chapter label or a
+        chapter-level title, set larger than the body text."""
+        body = [x for x in words if x[1] >= top - 0.5 * CM]
+        if not body:
+            return False
+        lines = []
+        for x in sorted(body, key=lambda x: (x[3], x[0])):
+            if lines and abs(lines[-1][-1][3] - x[3]) < 2:
+                lines[-1].append(x)
+            else:
+                lines.append([x])
+        first = sorted(lines[0], key=lambda x: x[0])
+        text = " ".join(x[4] for x in first)
+        larger = max(x[3] - x[1] for x in first) >= 1.2 * body_median
+        exact = bool(CHAPTER_LABEL.match(text)) or text in FRONT_TITLES or text in chapter_titles
+        return exact and larger
+
+    def is_blank(words):
+        return not words
+
+    def header_words(h, words):
+        return [x for x in words if x[3] < top - 0.2 * CM]
+
+    for n, (w, h, words) in enumerate(pages, 1):
+        if is_blank(words):
+            nxt = pages[n][2] if n < len(pages) else []
+            chapter_start_next = bool(nxt) and starts_chapter(nxt)
+            if not twoside:
+                add("warn", f"{pdf} p. {n}", "BLANK-PAGE", "blank page in the one-sided (digital) version")
+            elif n % 2 == 1 or not chapter_start_next:
+                add("warn", f"{pdf} p. {n}", "BLANK-PAGE",
+                    "blank page that does not precede a chapter-level start on an odd page")
+            continue
+        odd = n % 2 == 1
+        if twoside and not odd and starts_chapter(words):
+            add("error", f"{pdf} p. {n}", "CHAPTER-PARITY",
+                "a chapter-level unit starts on an even page (two-sided: chapters open on odd pages)")
+        left = inner if (odd or not twoside) else outer
+        right = outer if (odd or not twoside) else inner
+        # allowed regions: the header band above the text block, and the text block
+        # itself (descenders of the last line may go ~2 mm below it)
+        head_top, head_bottom = top - 1.8 * CM, top - 0.4 * CM
+        block_bottom = h - bottom + 0.25 * CM
+
+        def outside(x):
+            in_header = x[1] >= head_top and x[3] <= head_bottom
+            if in_header:
+                return max(left - x[0], x[2] - (w - right), 0)
+            vert = max(top - 0.5 * CM - x[1], x[3] - block_bottom, 0)
+            horiz = max(left - x[0], x[2] - (w - right), 0)
+            return max(vert, horiz)
+
+        bad = [(outside(x), x) for x in words if outside(x) > TOL]
+        if bad:
+            over, worst = max(bad, key=lambda b: b[0])
+            add("error", f"{pdf} p. {n}", "MARGIN",
+                f"text {over / CM * 10:.1f} mm outside the margins: «{worst[4][:40]}»")
+        if n == 1:
+            continue  # title page: no number
+        head = header_words(h, words)
+        nums = [x for x in head if ROMAN_OR_NUM.match(x[4])]
+        if not nums:
+            add("warn", f"{pdf} p. {n}", "PAGE-NUMBER", "no page number in the header")
+            continue
+        num = nums[0]
+        outer_right = odd or not twoside
+        side_ok = (num[2] > w - right - 3 * CM) if outer_right else (num[0] < left + 3 * CM)
+        if not side_ok:
+            add("warn", f"{pdf} p. {n}", "PAGE-NUMBER",
+                f"page number «{num[4]}» not on the outer side ({'right' if outer_right else 'left'})")
+
+    # headings at the bottom of a page, from the table of contents
+    if toc_text:
+        labels = {}
+        for n, (w, h, words) in enumerate(pages, 1):
+            for x in header_words(h, words):
+                if ROMAN_OR_NUM.match(x[4]):
+                    labels.setdefault(x[4], n)
+                    break
+        for m in re.finditer(r"\\contentsline \{(section|subsection|subsubsection)\}\{\\numberline \{([\d.A-Z]+)\}(.*?)\}\{([\divxlc]+)\}",
+                             toc_text):
+            num, title, label = m.group(2), m.group(3), m.group(4)
+            n = labels.get(label)
+            if not n:
+                continue
+            w, h, words = pages[n - 1]
+            first_word = norm(title).split(" ")[0] if norm(title) else ""
+            hits = [words[i] for i in range(len(words) - 1)
+                    if words[i][4] == num and words[i + 1][4].startswith(first_word[:6])
+                    and abs(words[i + 1][1] - words[i][1]) < 4]
+            if not hits:
+                continue
+            hy = hits[0][3]
+            below = [x for x in words if x[1] > hy + 2 and x[3] < h - bottom + 0.5 * CM]
+            text_area_bottom = h - bottom
+            if hy > text_area_bottom - 4 * 13.6 and len(below) < 15:
+                add("warn", f"{pdf} p. {n}", "HEADING-AT-BOTTOM",
+                    f"«{num} {re.sub(r'[{}\\\\]', '', title)[:50]}» starts at the bottom of the page "
+                    "with little or no text after it")
+
+
+# ----------------------------------------------------------------- main
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("--report", default="report")
+    ap.add_argument("--pdf", help="PDF to check (default: <report>/main.pdf)")
+    ap.add_argument("--build", help="build directory with main.log/main.toc (default: <report>/build)")
+    ap.add_argument("--formato", choices=("impressao", "digital"),
+                    help="layout of the PDF (default: digital if the file name has «digital»)")
+    ap.add_argument("--sem-pdf", action="store_true", help="only the template and log checks")
+    ap.add_argument("--quiet-info", action="store_true", help="hide info-level findings")
+    ap.add_argument("--reference", default=os.path.join(HERE, "..", "referencia-modelo.txt"))
+    args = ap.parse_args()
+
+    if not os.path.isdir(args.report) or not os.path.exists(os.path.join(args.report, "main.tex")):
+        print(f"fmt-check: {args.report}/main.tex not found", file=sys.stderr)
+        return 2
+    pdf = args.pdf or os.path.join(args.report, "main.pdf")
+    # the build directory follows the PDF: main-final-digital.pdf -> build-final-digital
+    suffix = re.fullmatch(r"main(.*)\.pdf", os.path.basename(pdf))
+    build = args.build or os.path.join(args.report, "build" + (suffix.group(1) if suffix else ""))
+    formato = args.formato or ("digital" if "digital" in os.path.basename(pdf) else "impressao")
+    ref = load_reference(args.reference)
+    out = []
+
+    def add(level, where, rule, msg):
+        out.append((level, where, rule, msg))
+
+    check_template(args.report, ref, add)
+    try:
+        check_log(build, add, args.report)
+        check_lists(args.report, build, add)
+    except BadInput as e:
+        print(f"fmt-check: {e}", file=sys.stderr)
+        return 2
+    if not args.sem_pdf:
+        missing = [t for t in ("pdfinfo", "pdftotext", "pdffonts") if not shutil.which(t)]
+        if missing:
+            print(f"fmt-check: missing {', '.join(missing)} (install poppler-utils) or use --sem-pdf",
+                  file=sys.stderr)
+            return 2
+        if not os.path.exists(pdf):
+            print(f"fmt-check: {pdf} not found: build it first", file=sys.stderr)
+            return 2
+        try:
+            check_pdf(pdf, build, formato, ref, add)
+        except BadInput as e:
+            print(f"fmt-check: {e}", file=sys.stderr)
+            return 2
+
+    rank = {"error": 0, "warn": 1, "info": 2}
+    for level, where, rule, msg in sorted(out, key=lambda f: rank[f[0]]):
+        if args.quiet_info and level == "info":
+            continue
+        print(f"{where}: {level} [{rule}] {msg}")
+    counts = {lv: sum(1 for f in out if f[0] == lv) for lv in rank}
+    print(f"# {formato}: {counts['error']} error(s), {counts['warn']} warning(s), {counts['info']} info",
+          file=sys.stderr)
+    return 1 if counts["error"] else 3 if counts["warn"] else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)

@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""verify-bib: first-pass check that BibTeX entries point at real, matching sources.
+
+  verify-bib [--keys k1,k2] [--cited TEXDIR] [--timeout 20] BIBFILE
+
+For each entry:
+  - with a DOI: look it up on Crossref (then DataCite, for arXiv/Zenodo DOIs)
+    and compare title (incl. subtitle), year and first author's family name;
+  - with only a URL: request it. HTTP 2xx gives OK-URL, which only means the
+    page loads: metadata is NOT checked, so confirm it by hand;
+  - with neither: MISSING-ID (books, manuals: check by hand).
+
+--cited TEXDIR limits the check to keys cited in .tex files under TEXDIR.
+Statuses: OK, OK-URL, MISMATCH, NOT-FOUND, UNREACHABLE, MISSING-ID, ERROR.
+Exit codes: 0 every entry OK; 3 only manual checks pending (OK-URL,
+UNREACHABLE, MISSING-ID); 1 a hard problem (MISMATCH, NOT-FOUND, ERROR);
+2 bad input (no entries parsed, no .tex files under --cited).
+
+Only the DOI or URL from the .bib file is sent anywhere. No personal data is
+sent; set CROSSREF_MAILTO to join Crossref's polite pool if you want to.
+"""
+from __future__ import annotations
+
+import argparse
+import difflib
+import json
+import os
+import re
+import sys
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+
+UA = "verify-bib/1.0 (dissertation source check)"
+
+
+def parse_bib(text: str) -> list[dict]:
+    """Minimal BibTeX parser: @type{key, field = {..} | ".." | bare, ...}."""
+    entries = []
+    # whole-line % comments (biber ignores them): a commented field or entry must not count
+    text = re.sub(r"(?m)^[ \t]*%.*$", "", text)
+    for m in re.finditer(r"@(\w+)\s*\{\s*([^,\s]+)\s*,", text):
+        etype, key = m.group(1).lower(), m.group(2)
+        if etype in ("comment", "preamble", "string"):
+            continue
+        i, depth, fields = m.end(), 1, {}
+        body_start = i
+        while i < len(text) and depth:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        if depth:
+            raise ValueError(f"entry {key!r}: unbalanced braces (missing closing '}}')")
+        body = text[body_start:i - 1]
+        j = 0
+        while j < len(body):
+            fm = re.compile(r"\s*([A-Za-z_-]+)\s*=\s*").match(body, j)
+            if not fm:
+                j += 1
+                continue
+            name, j = fm.group(1).lower(), fm.end()
+            if j < len(body) and body[j] == "{":
+                d, k = 0, j
+                while k < len(body):
+                    if body[k] == "{":
+                        d += 1
+                    elif body[k] == "}":
+                        d -= 1
+                        if d == 0:
+                            break
+                    k += 1
+                val, j = body[j + 1:k], k + 1
+            elif j < len(body) and body[j] == '"':
+                d, k = 0, j + 1
+                while k < len(body):
+                    ch = body[k]
+                    if ch == "\\":
+                        k += 2
+                        continue
+                    if ch == "{":
+                        d += 1
+                    elif ch == "}":
+                        d -= 1
+                    elif ch == '"' and d == 0:
+                        break
+                    k += 1
+                val, j = body[j + 1:k], k + 1
+            else:
+                vm = re.compile(r"[^,\n]+").match(body, j)
+                val, j = (vm.group(0).strip(), vm.end()) if vm else ("", j)
+            fields[name] = val.strip()
+        entries.append({"type": etype, "key": key, **fields})
+    return entries
+
+
+def norm(s: str) -> str:
+    s = re.sub(r"\\[a-zA-Z]+\s*", "", s)            # drop LaTeX commands
+    s = re.sub(r"[{}\\\"'`^~]", "", s)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+def first_family(author_field: str) -> str:
+    first = re.split(r"\s+and\s+", author_field.strip(), maxsplit=1)[0].strip("{} ")
+    fam = first.split(",")[0] if "," in first else first.split()[-1] if first.split() else ""
+    return norm(fam)
+
+
+def get(url: str, timeout: float, accept: str = "*/*"):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def compare(e: dict, source: str, titles: list[str], year: str, family: str) -> tuple[str, str]:
+    problems = []
+    bib_title = norm(e.get("title", ""))
+    ratio = max((difflib.SequenceMatcher(None, bib_title, norm(t)).ratio() for t in titles if t),
+                default=0.0)
+    if ratio < 0.85:
+        problems.append(f"title {ratio:.2f} vs {source} «{(titles or [''])[0][:70]}»")
+    bib_year = (e.get("year") or e.get("date", "")[:4]).strip()
+    if not bib_year:
+        problems.append("no year/date in the .bib")
+    if not e.get("author", "").strip():
+        problems.append("no author in the .bib")
+    unchecked = [f for f, v in (("year", year), ("first author", family)) if not v]
+    if year and bib_year and year != bib_year:
+        # online-first vs issue year differ often; accept a one-year gap
+        if not (year.isdigit() and bib_year.isdigit() and abs(int(year) - int(bib_year)) == 1):
+            problems.append(f"year {bib_year} vs {source} {year}")
+    if family and e.get("author") and not e["author"].lstrip().startswith("{"):
+        fam = norm(family)
+        if fam and first_family(e["author"]) not in (fam, fam.split()[-1]):
+            problems.append(f"first author «{first_family(e['author'])}» vs {source} «{fam}»")
+    if problems:
+        return "MISMATCH", "; ".join(problems)
+    note = f"; {' and '.join(unchecked)} not in {source}, compare by hand" if unchecked else ""
+    return "OK", f"{source}: {(titles or [''])[0][:60]} ({year}) — check the venue yourself{note}"
+
+
+def check_datacite(e: dict, doi: str, timeout: float) -> tuple[str, str]:
+    try:
+        attrs = json.load(get("https://api.datacite.org/dois/" + urllib.parse.quote(doi),
+                              timeout, "application/vnd.api+json"))["data"]["attributes"]
+    except urllib.error.HTTPError as err:
+        if err.code == 404:
+            return "NOT-FOUND", f"DOI {doi} unknown to Crossref and DataCite: open https://doi.org/{doi}"
+        if err.code in (401, 403, 429) or err.code >= 500:
+            return "UNREACHABLE", f"DataCite HTTP {err.code} (blocked, busy or down: retry later or check by hand)"
+        return "ERROR", f"DataCite HTTP {err.code}"
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as err:
+        return "UNREACHABLE", f"DataCite: {err}"
+    titles = [t.get("title", "") for t in attrs.get("titles") or []]
+    creators = attrs.get("creators") or [{}]
+    family = creators[0].get("familyName") or creators[0].get("name", "").split(",")[0]
+    return compare(e, "DataCite", titles, str(attrs.get("publicationYear") or ""), family)
+
+
+def check_doi(e: dict, timeout: float, throttle) -> tuple[str, str]:
+    doi = re.sub(r"^https?://(dx\.)?doi\.org/", "", e["doi"].strip())
+    url = "https://api.crossref.org/works/" + urllib.parse.quote(doi)
+    mailto = os.environ.get("CROSSREF_MAILTO")
+    if mailto:
+        url += "?mailto=" + urllib.parse.quote(mailto)
+    throttle(url)
+    try:
+        msg = json.load(get(url, timeout, "application/json"))["message"]
+    except urllib.error.HTTPError as err:
+        if err.code == 404:
+            throttle("https://api.datacite.org/")
+            return check_datacite(e, doi, timeout)
+        if err.code in (401, 403, 429) or err.code >= 500:
+            return "UNREACHABLE", f"Crossref HTTP {err.code} (blocked, busy or down: retry later or check by hand)"
+        return "ERROR", f"Crossref HTTP {err.code}"
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        return "UNREACHABLE", f"Crossref: {err}"
+    title = (msg.get("title") or [""])[0]
+    sub = (msg.get("subtitle") or [""])[0]
+    titles = [title] + ([f"{title}: {sub}", f"{title} {sub}"] if sub else [])
+    year = str((msg.get("issued", {}).get("date-parts") or [[None]])[0][0] or "")
+    authors = msg.get("author") or [{}]
+    family = authors[0].get("family", authors[0].get("name", ""))
+    return compare(e, "Crossref", titles, year, family)
+
+
+def check_url(e: dict, timeout: float, throttle) -> tuple[str, str]:
+    url = e["url"].strip()
+    throttle(url)
+    try:
+        with get(url, timeout) as r:
+            return "OK-URL", f"HTTP {r.status}; page loads, metadata NOT checked: confirm title/author/date by hand"
+    except urllib.error.HTTPError as err:
+        if err.code in (401, 403, 405, 429) or err.code >= 500:
+            return "UNREACHABLE", f"HTTP {err.code} (site blocks scripts or is down: open it in a browser and record the check)"
+        return "NOT-FOUND", f"HTTP {err.code}"
+    except (urllib.error.URLError, OSError) as err:
+        return "UNREACHABLE", str(err)
+
+
+# biblatex/natbib citation commands: \cite, \Cite, \parencite(s), \Textcite,
+# \footcite, \autocite, \smartcite, \supercite, \fullcite, \citep, \citet,
+# \citeauthor, \citeyear, \citetitle, \nocite, ... (not \excitement).
+CITE_CMD = re.compile(
+    r"\\(?:(?i:paren|text|foot|auto|smart|super|full|footfull)?(?i:cites?)"
+    r"(?:p|t|alp|alt|num|title|author|yearpar|year|url|date|field|list|name)?|nocite)\*?(?![A-Za-z])")
+
+
+def cite_groups(text: str, pos: int, multi: bool) -> tuple[list[str], int]:
+    """From just after a cite command, collect its {keys} group(s), skipping
+    whitespace and [opt] / (multicite) groups. Single cite commands take one
+    key group; multicite commands (\\parencites, \\textcites, ...) take all."""
+    keys, i, n = [], pos, len(text)
+    while True:
+        while i < n and text[i] in " \t\r\n":
+            i += 1
+        if i < n and text[i] in "[(":
+            close = "]" if text[i] == "[" else ")"
+            j = text.find(close, i + 1)
+            if j < 0:
+                return keys, n
+            i = j + 1
+            continue
+        if i < n and text[i] == "{":
+            j = text.find("}", i + 1)
+            if j < 0:
+                return keys, n
+            keys += [k.strip() for k in text[i + 1:j].split(",") if k.strip()]
+            i = j + 1
+            if not multi:
+                return keys, i
+            continue
+        return keys, i
+
+
+def cited_keys(texdir: str) -> tuple[set[str], int]:
+    keys, n_files = set(), 0
+    for root, _, files in os.walk(texdir):
+        for f in files:
+            if f.endswith(".tex"):
+                n_files += 1
+                text = open(os.path.join(root, f), encoding="utf-8").read()
+                text = re.sub(r"(?<!\\)%[^\n]*", "", text)  # comments; keep newlines
+                for m in CITE_CMD.finditer(text):
+                    multi = m.group(0).rstrip("*").endswith("cites")
+                    found, _ = cite_groups(text, m.end(), multi)
+                    keys.update(k for k in found if k != "*")  # \nocite{*}
+    return keys, n_files
+
+
+HARD = {"MISMATCH", "NOT-FOUND", "ERROR"}
+MANUAL = {"OK-URL", "UNREACHABLE", "MISSING-ID"}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("bib")
+    ap.add_argument("--keys", help="comma-separated keys to check (default: all)")
+    ap.add_argument("--cited", metavar="TEXDIR", help="check only keys cited under TEXDIR")
+    ap.add_argument("--timeout", type=float, default=20)
+    args = ap.parse_args()
+
+    try:
+        entries = parse_bib(open(args.bib, encoding="utf-8").read())
+    except (OSError, ValueError) as err:
+        print(f"verify-bib: {err}", file=sys.stderr)
+        return 2
+    if not entries:
+        print(f"verify-bib: no BibTeX entries parsed from {args.bib}", file=sys.stderr)
+        return 2
+    results: list[tuple[str, str, str]] = []
+    all_keys = {e["key"] for e in entries}
+    if args.keys:
+        wanted = {k.strip() for k in args.keys.split(",") if k.strip()}
+        for k in sorted(wanted - all_keys):
+            results.append((k, "ERROR", f"key not in {args.bib}"))
+        entries = [e for e in entries if e["key"] in wanted]
+    if args.cited:
+        used, n_files = cited_keys(args.cited)
+        if not n_files:
+            print(f"verify-bib: no .tex files under {args.cited}", file=sys.stderr)
+            return 2
+        for k in sorted(used - all_keys):
+            results.append((k, "ERROR", f"cited but not in {args.bib}"))
+        entries = [e for e in entries if e["key"] in used]
+    for r in results:
+        print("\t".join(r))
+
+    last: dict[str, float] = {}
+
+    def throttle(url: str):
+        """At most one request per second to any one host."""
+        host = urllib.parse.urlparse(url).hostname or ""
+        wait = last.get(host, 0.0) + 1.0 - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        last[host] = time.monotonic()
+
+    for e in entries:
+        if e.get("doi"):
+            status, detail = check_doi(e, args.timeout, throttle)
+        elif e.get("url"):
+            status, detail = check_url(e, args.timeout, throttle)
+        else:
+            status, detail = "MISSING-ID", f"no doi/url ({e['type']}): check by hand"
+        print(f"{e['key']}\t{status}\t{detail}")
+        results.append((e["key"], status, detail))
+
+    count = {s: sum(1 for r in results if r[1] == s) for s in ("OK", *sorted(MANUAL), *sorted(HARD))}
+    print("# " + ", ".join(f"{v} {k}" for k, v in count.items() if v) + f" (total {len(results)})",
+          file=sys.stderr)
+    if any(r[1] in HARD for r in results):
+        return 1
+    if any(r[1] in MANUAL for r in results):
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

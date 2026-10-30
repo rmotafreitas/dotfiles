@@ -1,0 +1,4 @@
+interface:
+  display_name: "Glossário"
+  short_description: "Audit and fix the acronym list and acronym use in the report"
+  default_prompt: "Use $glossario to review the glossary and every acronym in the report."

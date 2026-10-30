@@ -1,0 +1,698 @@
+#!/usr/bin/env python3
+"""lt-check: check European Portuguese (pt-PT) prose in LaTeX, Markdown or text files.
+
+  lt-check [--server URL] [--level default|picky] [--no-lt] [--disable RULE,...]
+           [--lang pt-PT|en-GB] [--env NAME] FILE...
+
+--lang en-GB checks English (British spelling, academic register); the extra
+checks are then the EN_* ones. Portuguese false-friend hints are off unless
+--falsos-amigos is given. Default: pt-PT.
+--env NAME checks only the text inside \\begin{NAME}...\\end{NAME} (e.g.
+abstractotherlanguage), keeping the original line numbers.
+
+Two passes over every file:
+  1. LanguageTool (pt-PT, AO90), on a LOCAL server only. LaTeX and Markdown
+     markup is sent as markup, so LanguageTool reads only the prose and the
+     reported positions still point at the original source.
+  2. Extra pt-PT checks that LanguageTool misses (Brazilian vocabulary,
+     gerund after "estar", sentence-initial clitics, decimal points, ...).
+
+Output: one finding per line, "file:line:col: [RULE] message | 'text' -> fix".
+Exit codes: 0 no findings, 1 findings, 2 usage error or server unreachable.
+
+Start the local server first (text never leaves the machine):
+  docker run -d --name lt-evio -p 127.0.0.1:8010:8010 erikvl87/languagetool
+The server URL defaults to $LT_SERVER or http://127.0.0.1:8010.
+Only loopback servers are accepted: unpublished text may contain
+confidential company information.
+"""
+from __future__ import annotations
+
+import argparse
+import bisect
+import ipaddress
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# --------------------------------------------------------------------------- #
+# Tokenizers: turn a file into LanguageTool annotation segments.
+# Each segment is {"text": ...} or {"markup": ..., "interpretAs": ...}.
+# Concatenating text+markup in order reproduces the file exactly, so the
+# offsets LanguageTool returns are offsets into the original file.
+# --------------------------------------------------------------------------- #
+
+# Commands whose (first) braced argument is not prose: drop it entirely.
+LATEX_SKIP_ARG = {
+    "cite", "citep", "citet", "parencite", "textcite", "autocite", "footcite",
+    "citeauthor", "citeyear", "nocite", "ref", "eqref", "autoref", "cref",
+    "Cref", "pageref", "label", "url", "input", "include", "includegraphics",
+    "usepackage", "documentclass", "bibliography", "addbibresource",
+    "begin", "end", "newacronym", "newglossaryentry", "setlength",
+    "addtolength", "hypersetup", "lstinline", "verb", "texttt", "path",
+    "graphicspath", "pgfplotsset", "tikzset", "definecolor", "bibliographystyle",
+    "href",
+}
+# Commands whose argument is foreign (usually English) text: spelling and
+# foreign-word findings inside them are dropped.
+LATEX_FOREIGN = {"textit", "emph", "textsl", "foreignlanguage"}
+# What a skipped command reads as, so spacing and punctuation stay natural.
+SKIP_ARG_AS = {
+    "cite": "(Autor, 2024)", "citep": "(Autor, 2024)", "parencite": "(Autor, 2024)",
+    "autocite": "(Autor, 2024)", "footcite": "", "citet": "Autor (2024)",
+    "textcite": "Autor (2024)", "citeauthor": "Autor", "citeyear": "2024",
+    "ref": "1.1", "eqref": "(1)", "autoref": "Secção 1.1", "cref": "Secção 1.1",
+    "Cref": "Secção 1.1", "pageref": "1", "url": "https://exemplo.pt",
+    "path": "ficheiro", "texttt": "código", "lstinline": "código", "verb": "código",
+    "begin": "\n", "end": "\n",
+}
+# Glossary commands: read the key as the acronym itself.
+LATEX_GLS = {"gls": "", "Gls": "", "glspl": "", "Glspl": "", "acrshort": "",
+             "acrlong": "", "acrfull": "", "glsentryshort": ""}
+# Commands that produce a fixed piece of prose.
+LATEX_LITERAL = {"ldots": "…", "dots": "…", "%": "%", "&": "&", "_": "_",
+                 "#": "#", "$": "$", "{": "", "}": "", "\\": "\n\n", ",": " ",
+                 ";": " ", " ": " ", "-": "", "LaTeX": "LaTeX", "TeX": "TeX",
+                 "item": "\n•", "par": "\n\n", "newline": " "}
+# Environments whose body is not prose.
+LATEX_SKIP_ENV = {"verbatim", "lstlisting", "minted", "equation", "equation*",
+                  "align", "align*", "math", "displaymath", "tikzpicture",
+                  "comment", "filecontents"}
+
+CMD_RE = re.compile(r"\\([A-Za-z@]+\*?|.)")
+# Any biblatex/natbib citation command (same family as verify-bib's CITE_CMD).
+CITE_NAME = re.compile(
+    r"(?:(?i:paren|text|foot|auto|smart|super|full|footfull)?(?i:cites?)"
+    r"(?:p|t|alp|alt|num|title|author|yearpar|year|url|date|field|list|name)?|nocite)\*?")
+
+
+def _cite_reading(name: str) -> str:
+    low = name.lower().rstrip("*")
+    if low.endswith("author"):
+        return "Silva"
+    if low.endswith("yearpar"):
+        return "(2024)"
+    if low.endswith("year") or low.endswith("date"):
+        return "2024"
+    if low.endswith("title"):
+        return "«Obra»"
+    if low.startswith("text") or low in ("citet", "citealt"):
+        return "Silva (2024)"
+    if low.startswith("foot") or low == "nocite":
+        return ""
+    return "(Silva, 2024)"
+
+
+def _skip_cite_groups(src: str, i: int, multi: bool) -> int:
+    """Skip whitespace, [opt] and (multicite) groups and the key group(s)."""
+    n = len(src)
+    while True:
+        k = i
+        while k < n and src[k] in " \t\r\n":
+            k += 1
+        if k < n and src[k] in "[(":
+            close = src.find("]" if src[k] == "[" else ")", k + 1)
+            i = n if close < 0 else close + 1
+            continue
+        if k < n and src[k] == "{":
+            i = _braced(src, k)
+            if not multi:
+                return i
+            continue
+        return i
+
+
+def _braced(src: str, i: int) -> int:
+    """Return the index just past the brace group that starts at src[i] == '{'."""
+    depth = 0
+    j = i
+    while j < len(src):
+        c = src[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return len(src)
+
+
+def _skip_opt_and_args(src: str, i: int, n_args: int) -> int:
+    """Skip optional [..] groups and n braced args after a command name."""
+    j = i
+    while True:
+        k = j
+        while k < len(src) and src[k] in " \t":
+            k += 1
+        if k < len(src) and src[k] == "[":
+            close = src.find("]", k)
+            j = len(src) if close < 0 else close + 1
+            continue
+        if n_args and k < len(src) and src[k] == "{":
+            j = _braced(src, k)
+            n_args -= 1
+            continue
+        return j
+
+
+def latex_segments(src: str, foreign: list | None = None) -> list[dict]:
+    """Tokenize LaTeX. If `foreign` is a list, append (start, end) source
+    ranges of \\textit/\\emph arguments to it."""
+    segs: list[dict] = []
+    buf: list[str] = []
+
+    def text_flush():
+        if buf:
+            segs.append({"text": "".join(buf)})
+            buf.clear()
+
+    def markup(s: str, interpret: str = ""):
+        text_flush()
+        if s:
+            segs.append({"markup": s, "interpretAs": interpret})
+
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == "%":  # comment to end of line (newline stays prose)
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            markup(src[i:j])
+            i = j
+            continue
+        if c == "$":  # inline or display math
+            dbl = src.startswith("$$", i)
+            end = src.find("$$" if dbl else "$", i + (2 if dbl else 1))
+            j = n if end < 0 else end + (2 if dbl else 1)
+            markup(src[i:j], "n")
+            i = j
+            continue
+        if c == "\\":
+            m = CMD_RE.match(src, i)
+            name = m.group(1)
+            j = m.end()
+            if name in ("(", "["):
+                close = "\\)" if name == "(" else "\\]"
+                end = src.find(close, j)
+                j = n if end < 0 else end + 2
+                markup(src[i:j], "n")
+                i = j
+                continue
+            if name == "begin":
+                env_m = re.match(r"\s*\{([^}]*)\}", src[j:])
+                env = env_m.group(1) if env_m else ""
+                if env in LATEX_SKIP_ENV:
+                    end_tok = "\\end{" + env + "}"
+                    end = src.find(end_tok, j)
+                    k = n if end < 0 else end + len(end_tok)
+                    markup(src[i:k], "\n")
+                    i = k
+                    continue
+            p = j
+            if name == "lstinline" and p < n and src[p] == "[":
+                q = src.find("]", p)
+                p = n if q < 0 else q + 1  # \lstinline[options]|code|
+            if name in ("verb", "verb*", "lstinline") and p < n and src[p] not in "{[":
+                end = src.find(src[p], p + 1)
+                k = n if end < 0 else end + 1
+                markup(src[i:k], "código")
+                i = k
+                continue
+            if CITE_NAME.fullmatch(name):
+                multi = name.rstrip("*").lower().endswith("cites")
+                k = _skip_cite_groups(src, j, multi)
+                markup(src[i:k], _cite_reading(name))
+                i = k
+                continue
+            if name in LATEX_GLS:
+                k = _skip_opt_and_args(src, j, 0)
+                if k < n and src[k] == "{":
+                    e = _braced(src, k)
+                    key = src[k + 1:e - 1]
+                    markup(src[i:e], key)  # PT-PT: acronym plural is invariable
+                    i = e
+                    continue
+            if name == "begin" and re.match(r"\s*\{(?:otherlanguage\*?|selectlanguage)\}", src[j:]):
+                k = _skip_opt_and_args(src, j, 2)  # environment name and language name
+                markup(src[i:k], "\n")
+                i = k
+                continue
+            if name.rstrip("*") in LATEX_SKIP_ARG:
+                n_args = 2 if name in ("newacronym",) else 1
+                k = _skip_opt_and_args(src, j, n_args)
+                interp = SKIP_ARG_AS.get(name.rstrip("*"), "")
+                markup(src[i:k], interp)
+                i = k
+                continue
+            if name in LATEX_LITERAL:
+                markup(src[i:j], LATEX_LITERAL[name])
+                i = j
+                continue
+            # Formatting / sectioning / unknown command: drop the command and
+            # any optional args; keep braced content as prose.
+            k = _skip_opt_and_args(src, j, 0)
+            if name == "foreignlanguage":
+                b = k
+                while b < n and src[b] in " \t":
+                    b += 1
+                if b < n and src[b] == "{":
+                    k = _braced(src, b)  # the language name is markup, not prose
+            if foreign is not None and name in LATEX_FOREIGN:
+                b = k
+                while b < n and src[b] in " \t":
+                    b += 1
+                if b < n and src[b] == "{":
+                    foreign.append((b, _braced(src, b)))
+            markup(src[i:k], "")
+            i = k
+            continue
+        if c in "{}":
+            markup(c)
+            i += 1
+            continue
+        if c == "~":
+            markup(c, " ")
+            i += 1
+            continue
+        if c == "&":  # table cell boundary: keep cells apart
+            markup(c, "\n\n")
+            i += 1
+            continue
+        if src.startswith("---", i):
+            markup("---", "—")
+            i += 3
+            continue
+        if src.startswith("--", i):
+            markup("--", "–")
+            i += 2
+            continue
+        if src.startswith("``", i) or src.startswith("''", i):
+            markup(src[i:i + 2], "\"")
+            i += 2
+            continue
+        buf.append(c)
+        i += 1
+    text_flush()
+    return segs
+
+
+MD_MARKUP_RE = re.compile(
+    r"(?ms)^```.*?^```[^\n]*$"          # fenced code
+    r"|^[ \t]*\|[^\n]*$"                # table rows (data, not prose)
+    r"|^[ \t]*(?:[-*+]|\d+\.)[ \t]+"      # list markers
+    r"|`[^`\n]+`"                       # inline code
+    r"|<!--.*?-->"                      # html comments
+    r"|<[^>\n]+>"                       # html tags
+    r"|\]\([^)\n]*\)"                   # link target
+    r"|https?://\S+"                    # bare urls
+    r"|^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$"  # table separator rows
+    r"|^#{1,6}\s"                       # heading marks
+    r"|[*_]{1,3}(?=\S)|(?<=\S)[*_]{1,3}"  # emphasis marks
+    r"|\|"                              # table pipes
+)
+
+
+def markdown_segments(src: str) -> list[dict]:
+    segs, pos = [], 0
+    for m in MD_MARKUP_RE.finditer(src):
+        if m.start() > pos:
+            segs.append({"text": src[pos:m.start()]})
+        tok = m.group(0)
+        interp = ""
+        if tok.startswith("```") or tok.lstrip().startswith("|"):
+            interp = "\n"
+        elif tok.startswith("`"):
+            interp = "código"
+        elif tok == "|":
+            interp = " "
+        if tok.startswith("]("):
+            interp = "]"
+        segs.append({"markup": tok, "interpretAs": interp})
+        pos = m.end()
+    if pos < len(src):
+        segs.append({"text": src[pos:]})
+    return segs
+
+
+def segments_for(path: str, src: str, foreign: list | None = None) -> list[dict]:
+    if path.endswith((".tex", ".cls", ".sty")):
+        return latex_segments(src, foreign)
+    if path.endswith((".md", ".markdown")):
+        return markdown_segments(src)
+    return [{"text": src}]
+
+
+def chunk(segs: list[dict], limit: int = 15000):
+    """Yield (start_offset, segments) chunks, split only at blank lines in prose.
+
+    A chunk may exceed `limit` when no blank line is available; words are
+    never split.
+    """
+    out, size, start, offset = [], 0, 0, 0
+    for s in segs:
+        if "text" not in s:
+            out.append(s)
+            size += len(s["markup"])
+            offset += len(s["markup"])
+            continue
+        piece = s["text"]
+        while size + len(piece) > limit:
+            cut = piece.rfind("\n\n", 0, max(0, limit - size))
+            if cut < 0 and out:  # close the current chunk, retry in a fresh one
+                yield start, out
+                start, out, size = offset, [], 0
+                continue
+            if cut < 0:
+                cut = piece.find("\n\n")
+            if cut < 0:
+                break  # one long paragraph: send it whole
+            cut += 2
+            out.append({"text": piece[:cut]})
+            yield start, out
+            offset += cut
+            start, out, size = offset, [], 0
+            piece = piece[cut:]
+        if piece:
+            out.append({"text": piece})
+            size += len(piece)
+            offset += len(piece)
+    if out:
+        yield start, out
+
+
+# --------------------------------------------------------------------------- #
+# Extra pt-PT checks (regexes on prose only).
+# --------------------------------------------------------------------------- #
+
+BR_WORDS = {
+    r"usu[aá]ri[oa]s?": "utilizador", r"telas?": "ecrã",
+    r"equipes?": "equipa", r"registros?": "registo", r"registrar": "registar",
+    r"planejamentos?": "planeamento", r"planejar": "planear",
+    r"(?:o|os|um|uns|do|dos|no|nos|pelo|ao|seu|seus) celular(?:es)?": "(o) telemóvel", r"aplicativos?": "aplicação",
+    r"bancos? de dados": "base de dados", r"deletar": "eliminar/apagar",
+    r"checar": "verificar", r"cadastros?": "registo",
+    r"gerenciar|gerenciamento": "gerir/gestão", r"treinamentos?": "formação/treino",
+    r"acadêmic[oa]s?": "académico", r"econômic[oa]s?": "económico",
+    r"fatos?(?= (?:de|que|é|foi))": "facto", r"contatos?": "contacto",
+    r"time(?= de (?:desenvolvimento|produto|dados))": "equipa",
+    r"você|vocês": "(evitar; registo impessoal)", r"a gente": "(evitar; registo impessoal)",
+    r"rodar(?= (?:o|um|os) (?:modelo|código|script|teste))": "executar",
+    r"ônibus|trem": "autocarro/comboio", r"recepção": "receção",
+    r"tópicos? (?=de pesquisa)": "temas", r"pesquisador(?:es|a|as)?": "investigador",
+}
+EXTRA_RULES = [
+    ("PTPT_BR_VOCAB", None, None),  # filled from BR_WORDS below
+    ("PTPT_GERUND", re.compile(
+        r"\b(?:est(?:á|ão|ou|amos|ava|avam|ar|eja|ejam|ive|iveram|ará|arão|aria|ariam))\s+"
+        r"(?:\w+mente\s+)?\w+(?:ando|endo|indo)\b", re.I),
+     "«estar + gerúndio»: no PT-PT escrito padrão (preferência deste trabalho) use «estar a + infinitivo» (p.ex. «está a fazer»); não altere citações literais."),
+    ("PTPT_CLITIC_START", re.compile(
+        r"(?:(?<=[.!?]\s)|(?<=^)|(?<=\n))(?:Se|Me|Te|Lhe|Lhes|Nos|Vos)\s+"
+        r"(?:pretend|propõ|propo|apresent|consider|verific|observ|conclu|utiliz|"
+        r"obt|pode|deve|espera|tem|verá|torn|encontr|realiz|defin)\w*\b"),
+     "«Se/Me/Lhe + verbo» em início de frase: se for pronome, em PT-PT usa-se ênclise («Pretende-se»); se for conjunção condicional («Se pretende…, …»), está correto."),
+    ("PTPT_DECIMAL_POINT", re.compile(r"(?<![\w.])\d+\.\d+(?=\s*(?:%|\\%|por cento|€|kWh|MWh|kW|pontos? percentuais|p\.p\.))"),
+     "Separador decimal: em PT-PT usa-se vírgula (p.ex. «28,5%»)."),
+    ("PTPT_STRAIGHT_QUOTES", re.compile(r"(?<![\w\\])\"[^\"\n]{2,80}\"(?!\w)"),
+     "Aspas: em texto académico PT-PT usam-se aspas angulares «…» (LaTeX: \\enquote{…})."),
+    ("PTPT_FIRST_PERSON", re.compile(r"\b(?:[Ee]u|[Nn]ós|[Nn]osso|[Nn]ossa|[Nn]ossos|[Nn]ossas|[Mm]eu|[Mm]inha)\b"),
+     "Primeira pessoa: em texto académico prefira o registo impessoal («pretende-se», «propõe-se»)."),
+    ("PTPT_EM_NIVEL", re.compile(r"\bem nível de\b", re.I),
+     "«Em nível de» é brasileiro; em PT-PT: «ao nível de» ou reformular."),
+]
+
+
+def extra_checks(prose: str):
+    """Yield (offset_in_prose, length, rule, message, suggestion)."""
+    for pat, fix in BR_WORDS.items():
+        for m in re.finditer(r"(?<![\w-])(?:" + pat + r")(?![\w-])", prose, re.I):
+            yield m.start(), len(m.group(0)), "PTPT_BR_VOCAB", \
+                "Forma brasileira ou desaconselhada em PT-PT.", fix
+    for rule, rx, msg in EXTRA_RULES[1:]:
+        for m in rx.finditer(prose):
+            yield m.start(), len(m.group(0)), rule, msg, ""
+
+
+def prose_view(segs: list[dict]):
+    """Return (prose, mapping) where mapping[k] = source offset of prose[k]."""
+    prose, mapping, off = [], [], 0
+    for s in segs:
+        if "text" in s:
+            prose.append(s["text"])
+            mapping.extend(range(off, off + len(s["text"])))
+            off += len(s["text"])
+        else:
+            rep = s.get("interpretAs", "")
+            prose.append(rep)
+            mapping.extend([off] * len(rep))
+            off += len(s["markup"])
+    return "".join(prose), mapping
+
+
+# --------------------------------------------------------------------------- #
+# Extra en-GB checks (academic British English).
+# --------------------------------------------------------------------------- #
+
+US_WORDS = {
+    r"color(?:s|ed|ing)?": "colour", r"behavior(?:s|al)?": "behaviour", r"modeling|modeled": "modelling/modelled",
+    r"labeling|labeled": "labelling/labelled", r"center(?:s|ed)?": "centre", r"analyze[sd]?|analyzing": "analyse",
+    r"program(?=\s+of\s+(?:study|work))": "programme", r"catalog(?:s)?": "catalogue", r"artifact(?:s)?": "artefact",
+    r"fulfill(?:s)?": "fulfil", r"toward(?=\s)": "towards", r"license(?=\s+(?:to|for))": "licence",
+}
+# -ize words that British (Oxford) also writes -ize are still -ise here (house choice: -ise)
+IZE_RE = re.compile(r"\b([A-Za-z]{3,}?)iz(e|es|ed|ing|ation|ations|er|ers)\b")
+IZE_KEEP = {"size", "sizes", "sized", "prize", "prizes", "seize", "capsize", "resize", "resized"}
+EN_RULES = [
+    ("EN_CONTRACTION", re.compile(r"\b(?:[A-Za-z]+n't|it's|we're|they're|let's|I'm|we've|that's)\b", re.I),
+     "Contraction: write it in full in academic text («does not», «it is»)."),
+    ("EN_FIRST_PERSON", re.compile(r"\b(?:I|my|me)\b"),
+     "First person singular: use the impersonal voice («this work proposes»)."),
+    ("EN_STRAIGHT_QUOTES", re.compile(r"(?<![\w\\])\"[^\"\n]{2,80}\"(?!\w)"),
+     "Straight quotes: use \\enquote{…} (renders ‘…’/“…”)."),
+    ("EN_DECIMAL_COMMA", re.compile(r"(?<![\w,])\d+,(?!\d{3}(?:,\d{3})*(?![\d,]))\d+(?=\s*(?:%|\\%|per cent|kWh|MWh|GWh|MW|kW))"),
+     "Decimal separator: English uses a point («28.5%»)."),
+]
+
+
+def en_checks(prose: str):
+    for pat, fix in US_WORDS.items():
+        for m in re.finditer(r"(?<![\w-])(?:" + pat + r")(?![\w-])", prose, re.I):
+            yield m.start(), len(m.group(0)), "EN_US_SPELLING", "American spelling; this work uses British English.", fix
+    for m in IZE_RE.finditer(prose):
+        if m.group(0).lower() in IZE_KEEP:
+            continue
+        yield m.start(), len(m.group(0)), "EN_IZE", "House style: -ise spelling (British).", \
+            m.group(1) + "is" + m.group(2)
+    for rule, rx, msg in EN_RULES:
+        for m in rx.finditer(prose):
+            yield m.start(), len(m.group(0)), rule, msg, ""
+
+
+def restrict_to_env(segs: list[dict], src: str, env: str) -> list[dict]:
+    """Turn every text segment outside \\begin{env}...\\end{env} into markup,
+    keeping offsets (so reported positions stay those of the source)."""
+    ranges = [(m.end(), e.start()) for m in re.finditer(r"\\begin\{" + re.escape(env) + r"\}", src)
+              for e in [re.compile(r"\\end\{" + re.escape(env) + r"\}").search(src, m.end())] if e]
+    out, off = [], 0
+    for sgm in segs:
+        piece = sgm.get("text", sgm.get("markup", ""))
+        if "text" not in sgm:
+            inside = any(x <= off < y for x, y in ranges)
+            out.append(sgm if inside else {"markup": piece, "interpretAs": "\n" if "\n" in piece else ""})
+        else:
+            # split the text piece at range borders
+            pos = 0
+            while pos < len(piece):
+                a = off + pos
+                inside = next(((x, y) for x, y in ranges if x <= a < y), None)
+                if inside:
+                    end = min(len(piece), inside[1] - off)
+                    out.append({"text": piece[pos:end]})
+                else:
+                    nxt = min([x for x, _ in ranges if x > a] or [off + len(piece)])
+                    end = min(len(piece), nxt - off)
+                    out.append({"markup": piece[pos:end], "interpretAs": "\n" if "\n" in piece[pos:end] else ""})
+                pos = end
+        off += len(piece)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# LanguageTool client.
+# --------------------------------------------------------------------------- #
+
+# Never through a proxy: http_proxy/https_proxy would carry the text off the machine.
+LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def lt_check(server: str, segs: list[dict], level: str, disabled: list[str], lang: str = "pt-PT",
+             false_friends: bool = False):
+    body = {"data": json.dumps({"annotation": segs}), "language": lang,
+            "motherTongue": "pt-PT", "level": level}
+    if lang != "pt-PT" and not false_friends:
+        body["disabledCategories"] = "FALSE_FRIENDS"
+    if disabled:
+        body["disabledRules"] = ",".join(disabled)
+    req = urllib.request.Request(server.rstrip("/") + "/v2/check",
+                                 data=urllib.parse.urlencode(body).encode())
+    with LOCAL.open(req, timeout=120) as r:
+        return json.load(r)["matches"]
+
+
+SPELLING_RULE_PREFIXES = ("MORFOLOGIK_RULE", "HUNSPELL", "PT_MULTITOKEN_SPELLING")
+FOREIGN_RULE_PREFIXES = SPELLING_RULE_PREFIXES + ("BARBARISMS",)
+# Already in PT-PT dictionaries (Priberam, Infopédia): written in roman, so the
+# BARBARISMS hint is a false positive. Words still felt as foreign (benchmark,
+# dashboard) stay out of this list and get italics.
+DICIONARIZADOS = {"interface", "interfaces"}
+
+
+def load_wordlist() -> set[str]:
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "wordlist.txt")
+    words: set[str] = set()
+    try:
+        for line in open(path, encoding="utf-8"):
+            line = line.split("#", 1)[0].strip()
+            if line:
+                words.add(line.lower())
+    except OSError:
+        pass
+    return words
+
+
+def ignorable_spelling(frag: str, words: set[str], src: str, off: int) -> bool:
+    """Spelling hits on LaTeX commands, acronyms or project terms are noise."""
+    if frag.startswith("\\"):
+        return True
+    if re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{1,}", frag):
+        return True
+    # widen to the surrounding token, e.g. "MOBI" inside "MOBI.E"
+    a, b = off, off + len(frag)
+    while a > 0 and (src[a - 1].isalnum() or src[a - 1] in ".-"):
+        a -= 1
+    while b < len(src) and (src[b].isalnum() or src[b] in ".-"):
+        b += 1
+    token = src[a:b].strip(".-").lower()
+    return frag.lower() in words or token in words
+
+
+def is_loopback(url: str) -> bool:
+    host = urllib.parse.urlparse(url).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="+")
+    ap.add_argument("--server", default=os.environ.get("LT_SERVER", "http://127.0.0.1:8010"))
+    ap.add_argument("--level", choices=("default", "picky"), default="picky")
+    ap.add_argument("--no-lt", action="store_true", help="only run the extra checks")
+    ap.add_argument("--lang", choices=("pt-PT", "en-GB"), default="pt-PT")
+    ap.add_argument("--env", help="check only inside \\begin{ENV}...\\end{ENV}")
+    ap.add_argument("--falsos-amigos", action="store_true",
+                    help="en-GB: also report Portuguese false-friend hints (noisy; off by default)")
+    ap.add_argument("--disable", default="WHITESPACE_RULE,UPPERCASE_SENTENCE_START,FINAL_STOPS,CHEMICAL_FORMULAS_TYPOGRAPHY",
+                    help="comma-separated LanguageTool rule ids to disable")
+    args = ap.parse_args()
+
+    if not args.no_lt:
+        if not is_loopback(args.server):
+            print(f"lt-check: refusing non-local server {args.server}", file=sys.stderr)
+            return 2
+        try:
+            LOCAL.open(args.server.rstrip("/") + "/v2/languages", timeout=10).read()
+        except (urllib.error.URLError, OSError) as e:
+            print(f"lt-check: LanguageTool not reachable at {args.server} ({e}).\n"
+                  "  Start it: docker run -d --name lt-evio -p 127.0.0.1:8010:8010 "
+                  "erikvl87/languagetool\n  Or run with --no-lt.", file=sys.stderr)
+            return 2
+
+    disabled = [r for r in args.disable.split(",") if r]
+    if args.lang == "en-GB":
+        # house style (British): -ise spelling, no serial comma, «MSc»
+        disabled += ["SERIAL_COMMA_ON", "OXFORD_SPELLING_Z_NOT_S", "BACHELOR_ABBR"]
+    words = load_wordlist()
+    total = 0
+    for path in args.files:
+        try:
+            src = open(path, encoding="utf-8").read()
+        except OSError as e:
+            print(f"lt-check: {e}", file=sys.stderr)
+            return 2
+        line_starts = [0] + [m.end() for m in re.finditer("\n", src)]
+
+        def where(off: int) -> str:
+            ln = bisect.bisect_right(line_starts, off)
+            return f"{path}:{ln}:{off - line_starts[ln - 1] + 1}"
+
+        foreign: list = []
+        segs = segments_for(path, src, foreign)
+        if args.env:
+            if not re.search(r"\\begin\{" + re.escape(args.env) + r"\}", src):
+                print(f"lt-check: no \\begin{{{args.env}}} in {path}", file=sys.stderr)
+                return 2
+            segs = restrict_to_env(segs, src, args.env)
+
+        def in_foreign(off: int) -> bool:
+            return any(a <= off < b for a, b in foreign)
+        findings = []
+        if not args.no_lt:
+            for start, part in chunk(segs):
+                if not any(sg.get("text", "").strip() for sg in part):
+                    continue
+                for m in lt_check(args.server, part, args.level, disabled, args.lang, args.falsos_amigos):
+                    off = start + m["offset"]
+                    frag = src[off:off + m["length"]]
+                    rid = m["rule"]["id"]
+                    if rid.startswith(FOREIGN_RULE_PREFIXES) and in_foreign(off):
+                        continue
+                    if rid.startswith("BARBARISMS") and frag.lower() in DICIONARIZADOS:
+                        continue
+                    if rid.startswith(SPELLING_RULE_PREFIXES) and ignorable_spelling(frag, words, src, off):
+                        continue
+                    if rid == "SENTENCE_WHITESPACE" and ignorable_spelling(frag, words, src, off):
+                        continue
+                    fixes = "/".join(r["value"] for r in m.get("replacements", [])[:3])
+                    findings.append((off, f"[{m['rule']['id']}] {m['message']} | '{frag}'"
+                                     + (f" -> {fixes}" if fixes else "")))
+        prose, mapping = prose_view(segs)
+        lt_offsets = {off for off, _ in findings}
+        checks = en_checks(prose) if args.lang == "en-GB" else extra_checks(prose)
+        for p_off, length, rule, msg, fix in checks:
+            if p_off >= len(mapping):
+                continue
+            off = mapping[p_off]
+            if off in lt_offsets:
+                continue  # LanguageTool already reported this position
+            frag = prose[p_off:p_off + length]
+            findings.append((off, f"[{rule}] {msg} | '{frag}'" + (f" -> {fix}" if fix else "")))
+        seen = set()
+        for off, text in sorted(findings):
+            key = (where(off), text)
+            if key in seen:
+                continue
+            seen.add(key)
+            print(f"{where(off)}: {text}")
+            total += 1
+    return 1 if total else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:  # e.g. piped into `head`
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)

@@ -1,0 +1,19 @@
+# Referência do modelo oficial TMDEI (MEI-ISEP/tmdei-dissertation-template)
+# Lido pelo scripts/fmt-check. Alterar só depois de comparar com uma versão nova do modelo
+# (ver SKILL.md, «Atualizar a referência») e registar a decisão no PR.
+
+commit = fc0b8f9c8f12082ee35156ced71201efb10160c8
+sha256 tmdei-style.cls = 0c306c54a31896c27aa7506bab91563cec81fd2257925bdb1f58f6b5d43363f2
+sha256 .latexmkrc = ab6568233206f5bdf700abd9b720d5873b89fc6f1a8080bbbe005ee84d4dd1c6
+
+# Opções da classe permitidas em main.tex (\documentclass[...]{tmdei-style}).
+# Exatamente uma língua; headsepline/oneside só via variantes de compilação (LINHA=1, FORMATO=digital).
+opcoes obrigatorias = 11pt singlespacing liststotoc parskip nohyperreflinkcolor
+opcoes lingua = portuguese english
+
+# Geometria do modelo (cm) e papel
+papel = a4
+margem interior = 3.5
+margem exterior = 2.6
+margem superior = 3.5
+margem inferior = 2.5

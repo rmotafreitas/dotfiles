@@ -1,0 +1,18 @@
+# Formato dos resumos — lido por scripts/abs-check e seguido pelo SKILL.md.
+# Resumo/Abstract do relatório: guia do modelo TMDEI («should usually not exceed 200 words»).
+# Resumo alargado (entrega de 16/12/2026): FORMATO PROVISÓRIO por omissão — nenhum documento
+# disponível o define. Confirmar no FAQ do PREPD (Moodle) ou com o orientador e atualizar
+# aqui (e registar a fonte em «alargado fonte»).
+
+resumo max palavras = 200
+abstract max palavras = 200
+resumo min palavras = 100
+abstract min palavras = 100
+keywords max = 6
+
+alargado ficheiro = report/resumo-alargado.tex
+alargado lingua = en-GB
+alargado max palavras = 1000
+alargado max paginas = 2
+alargado seccoes = Context | Problem and Research Gap | Research Questions | Methodology | Expected Contributions | Work Plan
+alargado fonte = por confirmar (formato por omissão, 29/10/2026)

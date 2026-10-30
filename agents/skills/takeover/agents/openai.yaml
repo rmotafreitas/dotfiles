@@ -1,0 +1,4 @@
+interface:
+  display_name: "Takeover"
+  short_description: "Take over an existing PR, branch or agent thread"
+  default_prompt: "Use $takeover to take over this work."

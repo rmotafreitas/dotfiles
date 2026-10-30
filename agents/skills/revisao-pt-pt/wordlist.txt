@@ -1,0 +1,34 @@
+# Termos do projeto aceites pela verificação ortográfica (um por linha; # = comentário).
+# Acrónimos em maiúsculas e comandos LaTeX já são ignorados automaticamente.
+EVIO
+MOBI.E
+MOBI.Data
+Text-to-SQL
+Leça
+Balio
+Matosinhos
+benchmark
+benchmarks
+dashboard
+dashboards
+prompt
+prompts
+snowballing
+backward
+forward
+stack
+pipeline
+pipelines
+framework
+frameworks
+logs
+Crossref
+DataCite
+OpenAlex
+NeurIPS
+Wohlin
+# Nomes próprios e termos usados nos textos em inglês
+Xplore
+Mota
+Freitas
+da

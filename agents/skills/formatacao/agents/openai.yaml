@@ -1,0 +1,4 @@
+interface:
+  display_name: "Formatação"
+  short_description: "Keep the official TMDEI formatting and check the built PDFs"
+  default_prompt: "Use $formatacao to check the formatting of the print and digital PDFs."

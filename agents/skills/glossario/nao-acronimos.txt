@@ -1,0 +1,18 @@
+# Siglas e nomes em maiúsculas que NÃO entram na lista de acrónimos.
+# Um por linha; «re:» = expressão regular (correspondência completa); # = comentário.
+# Acrescentar só depois de decidir que o termo não é um acrónimo a definir.
+
+# Nomes próprios (empresas, entidades, marcas, bases de dados, benchmarks)
+EVIO
+MOBI
+OpenAlex
+# Benchmarks e conjuntos de dados (nomes próprios, não siglas a expandir)
+BIRD
+# «UE» só em designações oficiais («Regulamento (UE) 2023/1804»); em prosa («a UE») usar \gls
+UE
+# Identificadores internos do documento (questões, objetivos, fontes)
+re:QI\d*
+re:O\d+
+re:[PTMCS]\d+[a-c]?
+# Unidades SI
+re:[kMGT]?W(h)?

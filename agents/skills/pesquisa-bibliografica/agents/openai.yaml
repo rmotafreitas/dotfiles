@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pesquisa bibliográfica"
+  short_description: "Search, verify and register dissertation sources"
+  default_prompt: "Use $pesquisa-bibliografica to find, verify and register sources for this dissertation."

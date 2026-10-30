@@ -184,6 +184,27 @@ Inside WSL, install these dotfiles as on Linux: clone, then `python3 scripts/ins
 
 [keyboard/](keyboard/) has my TMF Keyboard layout (US-International with Portuguese accents) for Windows, macOS and Linux, with install steps for each.
 
+## Agent skills
+
+[agents/skills/](agents/skills/) holds the agent skills from my MSc dissertation repository (private), copied at commit `b197dab`. Each skill is a folder with a `SKILL.md` in the open [Agent Skills](https://agentskills.io/specification) format, plus `agents/openai.yaml` for Codex. Codex, OpenCode, GitHub Copilot, Cursor and Gemini CLI read skills from `.agents/skills/`; Claude Code reads `.claude/skills/`.
+
+| Skill | Origin | Use |
+| --- | --- | --- |
+| `pesquisa-bibliografica` | mine | Find, verify (`scripts/verify-bib`) and register academic sources |
+| `revisao-pt-pt` | mine | Review European Portuguese academic writing with a local LanguageTool (`scripts/lt-check`) |
+| `glossario` | mine | Audit a LaTeX acronym list and its use (`scripts/gls-check`) |
+| `formatacao` | mine | Keep the ISEP TMDEI LaTeX template formatting and check the PDFs (`scripts/fmt-check`) |
+| `abstract` | mine | Write and check the dissertation abstracts (`scripts/abs-check`) |
+| `grill-me`, `grilling` | [mattpocock/skills](https://github.com/mattpocock/skills) (MIT, [licence](agents/skills/MATTPOCOCK-SKILLS-LICENSE)) | Interview to stress-test a plan |
+| `council`, `sol-loop`, `file-pr`, `babysit-pr`, `takeover`, `modernize`, `full-send`, `full-stop`, `leaving-pr-comments` | [t3dotgg/tstack](https://github.com/t3dotgg/tstack) (MIT, [licence](agents/skills/TSTACK-LICENSE)) | Multi-model review and pull request workflows |
+
+My own skills are written for the dissertation repository layout (`report/`, `research/`, `AGENTS.md`) and its Portuguese conventions; adapt the paths before using them elsewhere. The others work in any project. The installer does not link them. To use one, copy or symlink its folder into a project's `.agents/skills/` (and `.claude/skills/` for Claude Code), or into `~/.agents/skills/` and `~/.claude/skills/` for every project:
+
+```sh
+ln -s ~/dotfiles/agents/skills/council ~/.agents/skills/council
+ln -s ~/dotfiles/agents/skills/council ~/.claude/skills/council
+```
+
 ## Private and machine-specific settings
 
 These files live **outside this repository**:
@@ -218,4 +239,4 @@ GitHub Actions checks shell syntax and tests preview behavior, backups, repeat i
 
 The layout uses the symlink approach seen in [Holman's dotfiles](https://github.com/holman/dotfiles), with private overrides inspired by [thoughtbot's dotfiles](https://github.com/thoughtbot/dotfiles). [chezmoi](https://www.chezmoi.io/user-guide/setup/) was also reviewed; this setup stays small enough to use a standard-library installer without another manager.
 
-Configuration and scripts are MIT licensed; wallpaper artwork is excluded (see [asset notes](wallpapers/README.md)). Review and adapt the configuration before installing it on another machine.
+Configuration and scripts are MIT licensed; wallpaper artwork is excluded (see [asset notes](wallpapers/README.md)), and the third-party agent skills keep their own MIT licences. Review and adapt the configuration before installing it on another machine.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Abstract"
+  short_description: "Write and check the Resumo, Abstract and Extended Abstract"
+  default_prompt: "Use $abstract to update the Resumo, Abstract and Extended Abstract from the current report."

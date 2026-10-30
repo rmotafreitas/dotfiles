@@ -1,0 +1,662 @@
+#!/usr/bin/env python3
+"""gls-check: audit the acronym list (glossaries package) of a LaTeX document.
+
+  gls-check [--main report/main.tex] [--allow FILE] [--quiet-info] [--final]
+
+The document is flattened from MAIN, expanding every \\input/\\include where it
+occurs, so document order and enclosing environments (abstract, table, \\todo)
+are those of the PDF. Definitions (\\newacronym) may live in any input file.
+
+Findings, one per line: "file:line:col: LEVEL [RULE] message".
+
+  error  UNDEFINED        a glossaries command uses a key with no definition
+  error  DUPLICATE        key or short form defined twice
+  error  HEADING          first-use command (\\gls, \\glspl, ...) in a title or
+                          caption (expands in the ToC/lists); use \\glsentryshort
+  error  ABSTRACT         acronym command in the Resumo/Abstract: they must stand
+                          alone and write terms in full (skill abstract)
+  error  LONGPLURAL-USED  a command that prints the long plural (first \\glspl,
+                          \\acrlongpl, \\acrfullpl) on a multi-word long form
+                          without longplural: the PDF appends -s to the phrase
+  warn   HEADING-LINK     linking command (\\acrshort, ...) in a title or caption:
+                          breaks PDF bookmarks (titles) and adds links/index
+                          entries to the lists (captions); use \\glsentryshort
+  warn   NOT-INDEXED      printed only with \\glsentry*: missing from the list;
+                          add \\glsadd{KEY} outside the moving argument
+  warn   NEVER-EXPANDED   used, but never with a first-use command (\\gls,
+                          \\glspl, ...) in the prose (outside \\todo{} and floats):
+                          the reader never sees the expansion in the text
+  warn   UNUSED           defined, never used
+  warn   SINGLE-USE       used once: write it in full instead of an acronym
+  warn   RAW              short form typed as plain text: use \\gls
+  warn   MANUAL-LONG      long form typed by hand: use \\gls (or keep it if
+                          it is deliberate and drop the acronym; not
+                          reported inside the abstracts)
+  warn   DEFINITION-FILE  \\newacronym outside frontmatter/glossary.tex
+  warn   PLURAL           shortplural missing or different from the short form
+                          (PT-PT: every acronym is invariable, "os LLM", "os ARIMA")
+  warn   LONGPLURAL       multi-word common-noun long form without longplural
+  warn   CANDIDATE        all-caps token in the text that is neither defined
+                          nor in the allow-list: define it or allow-list it
+  info   FIRST-USE-IN-TODO   first use inside \\todo{}: expands only in drafts
+  info   FIRST-USE-IN-FLOAT  first use inside a table/figure (floats move)
+  info   ONLY-IN-TODO     every use is inside \\todo{}
+  info   PLANNED          once-used, unused or never expanded, but marked
+                          «% previsto: …» on the definition line (temporary;
+                          becomes an error with --final)
+  info   TABLE-ONLY       used only in tables/figures and marked «% só-tabela: …»
+                          (the list of acronyms gives the expansion)
+  info   PLANNED-STALE    «% previsto:» marker on an acronym that no longer needs it
+  info   ORDER            definitions not in alphabetical order
+  info   EN-ITALIC        English-looking long form not in \\textit{}
+
+--final (use for the submitted version): every remaining «% previsto:» marker
+is an error (PLANNED-FINAL).
+
+Exit codes: 0 no errors or warnings; 3 warnings only; 1 at least one error;
+2 bad input. Text is read locally; nothing is sent anywhere.
+"""
+from __future__ import annotations
+
+import argparse
+import bisect
+import os
+import re
+import sys
+
+# ----------------------------------------------------------------- commands
+# Commands that use the first-use mechanism (expand the first time).
+FIRST_USE = {"gls", "Gls", "GLS", "glspl", "Glspl", "GLSpl", "glsdisp", "ac", "Ac", "acp", "Acp"}
+# Commands that print and index the entry (appear in the list) but do not
+# consume the first use.
+INDEXING = {"glslink", "glstext", "Glstext", "glsfirst", "Glsfirst", "glsplural", "Glsplural",
+            "acrshort", "Acrshort", "ACRshort", "acrshortpl", "Acrshortpl",
+            "acrlong", "Acrlong", "acrlongpl", "Acrlongpl", "acrfull", "Acrfull",
+            "acrfullpl", "Acrfullpl", "acs", "acl", "acf", "acsp", "aclp", "acfp", "glsadd"}
+# Commands that print without indexing (no link, not in the list).
+NON_INDEXING = {"glsentryshort", "Glsentryshort", "glsentrylong", "Glsentrylong",
+                "glsentryfull", "glsentrytext", "Glsentrytext", "glsentryshortpl",
+                "glsentrylongpl"}
+RESET_KEY = {"glsreset", "glslocalreset"}
+UNSET_KEY = {"glsunset", "glslocalunset"}
+RESET_ALL = {"glsresetall", "glslocalresetall"}
+# Commands that always print the long plural.
+LONG_PLURAL_ALWAYS = {"acrlongpl", "Acrlongpl", "acrfullpl", "Acrfullpl", "aclp", "acfp",
+                      "glsentrylongpl"}
+# Commands that print the long plural on first use only.
+LONG_PLURAL_FIRST = {"glspl", "Glspl", "GLSpl", "acp", "Acp"}
+LINKING = FIRST_USE | (INDEXING - {"glsadd"})
+KEY_CMDS = FIRST_USE | INDEXING | NON_INDEXING | RESET_KEY | UNSET_KEY
+
+HEADINGS = {"part", "chapter", "section", "subsection", "subsubsection",
+            "paragraph", "subparagraph", "caption"}
+FLOATS = {"table", "table*", "figure", "figure*", "longtable"}
+ABSTRACTS = {"abstract", "abstractotherlanguage"}
+SKIP_ARG = {"cite", "citep", "citet", "parencite", "Parencite", "textcite", "Textcite",
+            "autocite", "footcite", "citeauthor", "citeyear", "citetitle", "nocite",
+            "parencites", "textcites", "ref", "eqref", "autoref", "cref", "Cref",
+            "pageref", "label", "url", "href", "input", "include", "includegraphics",
+            "usepackage", "documentclass", "addbibresource", "bibliography",
+            "bibliographystyle", "texttt", "path", "hypersetup", "setlength",
+            "addtolength", "definecolor", "graphicspath", "newcommand", "renewcommand",
+            "providecommand", "newacronym", "newglossaryentry", "printglossary",
+            "pgfplotsset", "usetikzlibrary"}
+MULTI_ARG = {"newcommand", "renewcommand", "providecommand", "newacronym", "newglossaryentry"}
+VERBATIM_ENVS = {"verbatim", "verbatim*", "lstlisting", "minted", "comment", "filecontents"}
+MATH_ENVS = {"equation", "equation*", "align", "align*", "math", "displaymath", "gather", "gather*"}
+
+CMD_RE = re.compile(r"\\([A-Za-z@]+\*?|.)")
+EN_WORDS = re.compile(r"\b(the|of|and|for|to|as|with|on|in|language|learning|model|models|"
+                      r"system|systems|service|interface|query|network|regulation|"
+                      r"business|consumer|error|mean|square|root|items|reporting)\b", re.I)
+ROMAN = re.compile(r"M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})")
+
+
+def braced(src: str, i: int) -> int:
+    """Index just past the {...} group starting at src[i] == '{'."""
+    depth, j = 0, i
+    while j < len(src):
+        c = src[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return len(src)
+
+
+def bracketed(src: str, i: int) -> int:
+    """Index just past the [...] group starting at src[i] == '[' (brace-aware)."""
+    depth, j = 0, i
+    while j < len(src):
+        c = src[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "{":
+            j = braced(src, j)
+            continue
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return len(src)
+
+
+def skip_ws(src: str, i: int) -> int:
+    while i < len(src) and src[i] in " \t\r\n":
+        i += 1
+    return i
+
+
+def skip_ws_opt(src: str, i: int) -> int:
+    """Skip whitespace and [..] optional groups."""
+    while True:
+        k = skip_ws(src, i)
+        if k < len(src) and src[k] == "[":
+            i = bracketed(src, k)
+            continue
+        return k
+
+
+def inline_verbatim_end(src: str, name: str, j: int) -> int | None:
+    """For \\verb|..| or \\lstinline[opts]|..| starting after the command name
+    at j, return the index just past the closing delimiter; None otherwise."""
+    if name.rstrip("*") not in ("verb", "lstinline"):
+        return None
+    k = j
+    if name.startswith("lstinline") and k < len(src) and src[k] == "[":
+        k = bracketed(src, k)
+    if k >= len(src) or src[k] in "{ \t\r\n":
+        return None
+    e = src.find(src[k], k + 1)
+    return len(src) if e < 0 else e + 1
+
+
+def strip_comments(src: str) -> str:
+    """Blank out % comments, keeping offsets. Inline verbatim (\\verb|..|,
+    \\lstinline|..|), verbatim environments and \\url/\\href arguments are
+    left untouched, because % is literal there."""
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == "\\":
+            m = CMD_RE.match(src, i)
+            name = m.group(1)
+            j = m.end()
+            ve = inline_verbatim_end(src, name, j)
+            if ve is not None:
+                i = ve
+                continue
+            if name in ("url", "href"):
+                k = skip_ws(src, j)
+                i = braced(src, k) if k < n and src[k] == "{" else j
+                continue
+            if name == "begin":
+                em = re.match(r"\s*\{([^}]*)\}", src[j:])
+                if em and em.group(1) in VERBATIM_ENVS:
+                    end = src.find("\\end{" + em.group(1) + "}", j)
+                    i = n if end < 0 else end
+                    continue
+            i = j
+            continue
+        if c == "%":
+            e = src.find("\n", i)
+            e = n if e < 0 else e
+            for k in range(i, e):
+                out[k] = " "
+            i = e
+            continue
+        i += 1
+    return "".join(out)
+
+
+# ----------------------------------------------------------------- flattening
+class Doc:
+    """The document flattened at its \\input/\\include points."""
+
+    def __init__(self, main: str):
+        self.root = os.path.dirname(os.path.abspath(main))
+        self.files: dict[str, str] = {}      # path -> raw text
+        self.lines: dict[str, list[int]] = {}
+        self.parts: list[str] = []
+        self.segs: list[tuple[int, str, int]] = []   # (virtual start, file, file start)
+        self.size = 0
+        self._stack: list[str] = []
+        self._flatten(os.path.abspath(main))
+        self.text = "".join(self.parts)
+        self.starts = [s[0] for s in self.segs]
+
+    def _emit(self, path: str, chunk: str, fstart: int):
+        if chunk:
+            self.segs.append((self.size, path, fstart))
+            self.parts.append(chunk)
+            self.size += len(chunk)
+
+    def _flatten(self, path: str):
+        if path in self._stack or not os.path.exists(path):
+            return
+        self._stack.append(path)
+        raw = open(path, encoding="utf-8").read()
+        self.files[path] = raw
+        self.lines[path] = [0] + [m.end() for m in re.finditer("\n", raw)]
+        text = strip_comments(raw)
+        pos = 0
+        for m in re.finditer(r"\\(?:input|include)\s*\{([^}]+)\}", text):
+            self._emit(path, text[pos:m.end()], pos)
+            name = m.group(1).strip()
+            if not name.endswith(".tex"):
+                name += ".tex"
+            self._flatten(os.path.join(self.root, name))
+            pos = m.end()
+        self._emit(path, text[pos:], pos)
+        self._stack.pop()
+
+    def locate(self, voff: int) -> tuple[str, int, int]:
+        idx = max(0, bisect.bisect_right(self.starts, voff) - 1)
+        vstart, path, fstart = self.segs[idx]
+        foff = fstart + (voff - vstart)
+        lines = self.lines[path]
+        ln = bisect.bisect_right(lines, foff)
+        return (os.path.relpath(path), ln, foff - lines[ln - 1] + 1)
+
+
+# ----------------------------------------------------------------- definitions
+PLANNED_RE = re.compile(r"%\s*previsto\s*:\s*(.*)", re.I)
+TABLE_RE = re.compile(r"%\s*s[óo]-tabela\s*:\s*(.*)", re.I)
+
+
+def parse_definitions(path: str, raw: str):
+    text = strip_comments(raw)
+    defs = []
+    for m in re.finditer(r"\\newacronym(?![A-Za-z])", text):
+        k = skip_ws(text, m.end())
+        opts = ""
+        if k < len(text) and text[k] == "[":
+            e = bracketed(text, k)
+            opts, k = text[k + 1:e - 1], e
+        args = []
+        for _ in range(3):
+            k = skip_ws(text, k)
+            if k >= len(text) or text[k] != "{":
+                break
+            e = braced(text, k)
+            args.append(text[k + 1:e - 1])
+            k = e
+        if len(args) < 3:
+            continue
+        fields = {}
+        for fm in re.finditer(r"(\w+)\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\}|[^,]+)", opts):
+            v = fm.group(2).strip()
+            fields[fm.group(1)] = v[1:-1] if v.startswith("{") else v
+        # planned-use marker on the line where the definition ends
+        line_start = raw.rfind("\n", 0, k) + 1
+        line_end = raw.find("\n", k)
+        line = raw[line_start: len(raw) if line_end < 0 else line_end]
+        pm = PLANNED_RE.search(line)
+        tm = TABLE_RE.search(line)
+        defs.append({"key": args[0].strip(), "short": args[1].strip(), "long": args[2].strip(),
+                     "opts": fields, "file": path, "foff": m.start(),
+                     "planned": pm.group(1).strip() if pm else None,
+                     "table_only": tm.group(1).strip() if tm else None})
+    return defs
+
+
+def plain(s: str) -> str:
+    s = re.sub(r"\\[A-Za-z]+\*?\s*", "", s)
+    return re.sub(r"\s+", " ", s.replace("{", "").replace("}", "")).strip()
+
+
+# ----------------------------------------------------------------- scanning
+class Scan:
+    """One pass over the flattened document body."""
+
+    def __init__(self, src: str):
+        self.src = src
+        self.prose = [" "] * len(src)
+        self.events = []          # (kind, key, cmd, off): kind in use/reset/resetall/unset
+        self.todo, self.heading, self.float_, self.abstract, self.quote = [], [], [], [], []
+        b = src.find("\\begin{document}")
+        self._walk(b if b >= 0 else len(src))
+        self.prose = "".join(self.prose)
+        for m in re.finditer(r"«[^»]*»", self.prose):
+            self.quote.append((m.start(), m.end()))
+
+    @staticmethod
+    def inside(off: int, ranges) -> bool:
+        return any(a <= off < b for a, b in ranges)
+
+    def _walk(self, i: int):
+        src, n = self.src, len(self.src)
+        envs = []
+        while i < n:
+            c = src[i]
+            if c == "$":
+                dbl = src.startswith("$$", i)
+                e = src.find("$$" if dbl else "$", i + (2 if dbl else 1))
+                i = n if e < 0 else e + (2 if dbl else 1)
+                continue
+            if c != "\\":
+                if c not in "{}~&":
+                    self.prose[i] = c
+                i += 1
+                continue
+            m = CMD_RE.match(src, i)
+            name, j = m.group(1), m.end()
+            base = name.rstrip("*")
+            if name in ("(", "["):
+                e = src.find("\\)" if name == "(" else "\\]", j)
+                i = n if e < 0 else e + 2
+                continue
+            ve = inline_verbatim_end(src, name, j)
+            if ve is not None:
+                i = ve
+                continue
+            if base in ("begin", "end"):
+                em = re.match(r"\s*\{([^}]*)\}", src[j:])
+                env = em.group(1) if em else ""
+                k = j + (em.end() if em else 0)
+                if base == "begin" and (env in VERBATIM_ENVS or env in MATH_ENVS):
+                    e = src.find("\\end{" + env + "}", k)
+                    i = n if e < 0 else e + len(env) + 6
+                    continue
+                if base == "begin":
+                    envs.append((env, k))
+                else:
+                    for idx in range(len(envs) - 1, -1, -1):
+                        if envs[idx][0] == env:
+                            _, s0 = envs.pop(idx)
+                            if env in FLOATS:
+                                self.float_.append((s0, i))
+                            if env in ABSTRACTS:
+                                self.abstract.append((s0, i))
+                            break
+                i = k
+                continue
+            if base in RESET_ALL:
+                self.events.append(("resetall", None, base, i))
+                i = j
+                continue
+            if base in KEY_CMDS:
+                k = skip_ws_opt(src, j)
+                if k < n and src[k] == "{":
+                    e = braced(src, k)
+                    keys = [x.strip() for x in src[k + 1:e - 1].split(",")] \
+                        if base in RESET_KEY | UNSET_KEY | {"glsadd"} else [src[k + 1:e - 1].strip()]
+                    kind = "reset" if base in RESET_KEY else "unset" if base in UNSET_KEY else "use"
+                    for key in keys:
+                        if key:
+                            self.events.append((kind, key, base, i))
+                    i = e
+                    continue
+                i = k
+                continue
+            if base in HEADINGS:
+                k = skip_ws(src, j)
+                if k < n and src[k] == "[":           # optional (ToC/list) title
+                    e = bracketed(src, k)
+                    self.heading.append((k, e))
+                    k = skip_ws(src, e)
+                if k < n and src[k] == "{":
+                    self.heading.append((k, braced(src, k)))
+                i = j
+                continue
+            if base in ("todo", "enquote"):
+                k = skip_ws_opt(src, j)
+                if k < n and src[k] == "{":
+                    (self.todo if base == "todo" else self.quote).append((k, braced(src, k)))
+                i = j
+                continue
+            if base in SKIP_ARG:
+                k = skip_ws_opt(src, j)
+                if k < n and src[k] == "{":
+                    k = braced(src, k)
+                    if base in MULTI_ARG:
+                        while True:
+                            k2 = skip_ws_opt(src, k)
+                            if k2 < n and src[k2] == "{":
+                                k = braced(src, k2)
+                            else:
+                                break
+                i = k
+                continue
+            i = j  # formatting or unknown command: its {} content stays prose
+
+
+# ----------------------------------------------------------------- allow-list
+def load_allow(path: str):
+    words, patterns = set(), []
+    if path and os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            if line.startswith("re:"):
+                patterns.append(re.compile(line[3:].strip() + r"\Z"))
+            else:
+                words.add(line)
+    return words, patterns
+
+
+# ----------------------------------------------------------------- main
+def main() -> int:
+    here = os.path.dirname(os.path.realpath(__file__))
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("--main", default="report/main.tex")
+    ap.add_argument("--allow", default=os.path.join(here, "..", "nao-acronimos.txt"))
+    ap.add_argument("--quiet-info", action="store_true", help="hide info-level findings")
+    ap.add_argument("--final", action="store_true", help="submitted version: «%% previsto:» markers are errors")
+    args = ap.parse_args()
+    if not os.path.exists(args.main):
+        print(f"gls-check: {args.main} not found", file=sys.stderr)
+        return 2
+
+    doc = Doc(args.main)
+    defs = []
+    for path, raw in doc.files.items():
+        defs += parse_definitions(path, raw)
+    if not defs:
+        print("gls-check: no \\newacronym definitions found", file=sys.stderr)
+        return 2
+    scan = Scan(doc.text)
+    out = []
+
+    def loc_of_def(d):
+        lines = doc.lines[d["file"]]
+        ln = bisect.bisect_right(lines, d["foff"])
+        return (os.path.relpath(d["file"]), ln, d["foff"] - lines[ln - 1] + 1)
+
+    def add(level, where, rule, msg):
+        if isinstance(where, int):
+            where = doc.locate(where)
+        elif isinstance(where, str):
+            where = (os.path.relpath(where), 0, 0)
+        out.append((level, where, rule, msg))
+
+    # ---- definitions
+    keys, shorts = {}, {}
+    glossary = os.path.realpath(os.path.join(os.path.dirname(args.main), "frontmatter", "glossary.tex"))
+    for d in defs:
+        loc = loc_of_def(d)
+        if os.path.realpath(d["file"]) != glossary:
+            add("warn", loc, "DEFINITION-FILE", f"«{d['key']}» is defined outside frontmatter/glossary.tex: move it there")
+        for table, field in ((keys, "key"), (shorts, "short")):
+            if d[field] in table:
+                prev = table[d[field]]
+                add("error", loc, "DUPLICATE", f"{field} «{d[field]}» already defined at {prev[0]}:{prev[1]}")
+            else:
+                table[d[field]] = loc
+        long_plain = plain(d["long"])
+        d["common"] = bool(long_plain) and long_plain[0].islower()
+        d["needs_longplural"] = " " in long_plain and "longplural" not in d["opts"]
+        sp = d["opts"].get("shortplural")
+        if sp is None or plain(sp) != plain(d["short"]):
+            add("warn", loc, "PLURAL", f"«{d['key']}»: set shortplural={{{d['short']}}} (PT-PT: siglas invariáveis)")
+        if EN_WORDS.search(long_plain) and not re.fullmatch(r"\s*\\textit\{.*\}\s*", d["long"], re.S) \
+                and not re.search(r"[ãõçáéíóúâêô]", long_plain):
+            add("info", loc, "EN-ITALIC", f"«{d['key']}»: English long form «{long_plain}» should be in \\textit{{}}")
+    order = [d["short"].lower() for d in defs]
+    if order != sorted(order):
+        add("info", defs[0]["file"], "ORDER", "definitions are not in alphabetical order of the short form")
+
+    # ---- uses, in document order, with first-use state
+    defined = {}
+    for d in defs:
+        defined.setdefault(d["key"], d)
+    uses = {k: [] for k in defined}          # (cmd, off, in_todo)
+    used_state = set()                       # keys whose first use has been consumed
+    final_state = set()                      # same, as in the final build (\todo{} removed)
+    expanding = {k: [] for k in defined}     # offsets of the uses that expand in the final build
+    first = {}                               # key -> first effective first-use (cmd, off)
+    for kind, key, cmd, off in scan.events:
+        ev_in_todo = scan.inside(off, scan.todo)   # removed from the final build
+        if scan.inside(off, scan.abstract):
+            what = f"\\{cmd}{{{key}}}" if key else f"\\{cmd}"
+            add("error", off, "ABSTRACT", f"{what} in an abstract: no acronym commands there, write terms in full (skill abstract)")
+        if kind == "resetall":
+            used_state.clear()
+            if not ev_in_todo:
+                final_state.clear()
+            continue
+        if key not in defined:
+            add("error", off, "UNDEFINED", f"\\{cmd}{{{key}}}: no \\newacronym for «{key}»")
+            continue
+        if kind == "reset":
+            used_state.discard(key)
+            if not ev_in_todo:
+                final_state.discard(key)
+            continue
+        if kind == "unset":
+            used_state.add(key)
+            if not ev_in_todo:
+                final_state.add(key)
+            continue
+        in_todo = scan.inside(off, scan.todo)
+        in_heading = scan.inside(off, scan.heading)
+        uses[key].append((cmd, off, in_todo))
+        if in_heading and cmd in FIRST_USE:
+            add("error", off, "HEADING", f"\\{cmd}{{{key}}} in a title/caption: use \\glsentryshort{{{key}}}")
+        elif in_heading and cmd in LINKING:
+            add("warn", off, "HEADING-LINK", f"\\{cmd}{{{key}}} in a title/caption: use \\glsentryshort{{{key}}}")
+        is_first = cmd in FIRST_USE and key not in used_state
+        is_first_final = cmd in FIRST_USE and not in_todo and key not in final_state
+        if is_first_final:
+            final_state.add(key)
+            expanding[key].append(off)
+        d = defined[key]
+        if d["needs_longplural"] and (cmd in LONG_PLURAL_ALWAYS or ((is_first or is_first_final) and cmd in LONG_PLURAL_FIRST)):
+            add("error", off, "LONGPLURAL-USED",
+                f"\\{cmd}{{{key}}} prints the long plural, but there is no longplural: «{plain(d['long'])}s»")
+        if is_first:
+            used_state.add(key)
+            first.setdefault(key, (cmd, off))
+
+    for key, d in defined.items():
+        loc = loc_of_def(d)
+        live = [u for u in uses[key] if not u[2]]
+        if uses[key] and not any(u[0] in FIRST_USE | INDEXING for u in uses[key]):
+            add("warn", loc, "NOT-INDEXED", f"«{key}» is printed only with \\glsentry*: add \\glsadd{{{key}}}")
+        # the use that actually expands (final build) must be in the prose, not in a float
+        expanded = any(not scan.inside(off, scan.float_) for off in expanding[key])
+        in_floats_only = bool(live) and all(scan.inside(u[1], scan.float_) for u in live)
+        needs_marker = len(live) <= 1 or not expanded
+        if d["planned"] and args.final:
+            add("error", loc, "PLANNED-FINAL", f"«{key}» still marked «% previsto: {d['planned']}»: resolve it before the final version")
+        elif d["planned"] and needs_marker:
+            add("info", loc, "PLANNED", f"«{key}» used {len(live)}× so far, expanded: {'yes' if expanded else 'no'}; kept for: {d['planned']}")
+        elif d["planned"]:
+            add("info", loc, "PLANNED-STALE", f"«{key}» is used and expanded: remove its «% previsto:» marker")
+        elif d["table_only"] and not uses[key]:
+            add("warn", loc, "UNUSED", f"«{key}» is defined but never used (marked «% só-tabela:»)")
+        elif d["table_only"] and in_floats_only:
+            add("info", loc, "TABLE-ONLY", f"«{key}» used only in tables/figures: {d['table_only']}")
+        elif d["table_only"] and live:
+            add("warn", loc, "TABLE-ONLY", f"«{key}» is marked «% só-tabela:» but is used outside tables/figures")
+        elif live and not expanded:
+            add("warn", live[0][1], "NEVER-EXPANDED", f"«{key}» is never expanded in the text: use \\gls{{{key}}} at its first mention in the prose")
+        if d["planned"] or d["table_only"]:
+            pass
+        elif not uses[key]:
+            add("warn", loc, "UNUSED", f"«{key}» is defined but never used")
+        elif not live:
+            add("info", loc, "ONLY-IN-TODO", f"«{key}» is only used inside \\todo{{}}")
+        elif len(live) == 1:
+            add("warn", live[0][1], "SINGLE-USE",
+                f"«{key}» is used only once: consider writing «{plain(d['long'])}» in full")
+        if d["needs_longplural"] and d["common"]:
+            add("warn", loc, "LONGPLURAL", f"«{key}»: multi-word long form without longplural")
+        if key in first:
+            _, off = first[key]
+            if scan.inside(off, scan.todo):
+                add("info", off, "FIRST-USE-IN-TODO", f"first use of «{key}» is inside \\todo{{}} (expands only in drafts)")
+            elif scan.inside(off, scan.float_):
+                add("info", off, "FIRST-USE-IN-FLOAT", f"first use of «{key}» is inside a table/figure")
+
+    # ---- raw short forms, manual long forms, candidates (prose only)
+    allow_words, allow_re = load_allow(args.allow)
+    short_set = {d["short"] for d in defs}
+    prose, low = scan.prose, scan.prose.lower()
+    for d in defs:
+        for m in re.finditer(r"(?<![\w-])" + re.escape(d["short"]) + r"s?(?![\w-])", prose):
+            if scan.inside(m.start(), scan.heading) or scan.inside(m.start(), scan.quote):
+                continue  # titles must not link; quotations are verbatim
+            add("warn", m.start(), "RAW", f"«{m.group(0)}» typed as text: use \\gls{{{d['key']}}}")
+        if not uses.get(d["key"]):
+            continue  # unused acronym: writing the term in full is correct (see UNUSED)
+        forms = {plain(d["long"]).lower()}
+        if "longplural" in d["opts"]:
+            forms.add(plain(d["opts"]["longplural"]).lower())
+        for f in forms:
+            if len(f) < 6:
+                continue
+            pat = r"(?<![\w-])" + r"\s+".join(map(re.escape, f.split())) + r"(?![\w-])"
+            for m in re.finditer(pat, low):
+                if scan.inside(m.start(), scan.abstract) or scan.inside(m.start(), scan.quote):
+                    continue  # abstracts write terms in full (ABSTRACT); quotations are verbatim
+                add("warn", m.start(), "MANUAL-LONG",
+                    f"«{prose[m.start():m.end()]}» typed by hand: use \\gls{{{d['key']}}}")
+    candidates = {}
+    for m in re.finditer(r"(?<![\w.-])([A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*)(?![\w-])", prose):
+        tok = m.group(1)
+        core = tok[:-1] if tok.endswith("s") and tok[:-1] in short_set else tok
+        if core in short_set or len(tok) > 12 or sum(ch.isupper() for ch in tok) < 2:
+            continue
+        if ROMAN.fullmatch(tok):
+            continue
+        if tok in allow_words or any(p.match(tok) for p in allow_re):
+            continue
+        candidates.setdefault(tok, []).append(m.start())
+    for tok, offs in sorted(candidates.items()):
+        add("warn", offs[0], "CANDIDATE", f"«{tok}» ({len(offs)}×) is not defined: \\newacronym it or add it to the allow-list")
+
+    # ---- report
+    rank = {"error": 0, "warn": 1, "info": 2}
+    shown = [f for f in out if not (args.quiet_info and f[0] == "info")]
+    for level, (path, ln, col), rule, msg in sorted(shown, key=lambda f: (rank[f[0]], f[1])):
+        loc = f"{path}:{ln}:{col}" if ln else path
+        print(f"{loc}: {level} [{rule}] {msg}")
+    counts = {lv: sum(1 for f in out if f[0] == lv) for lv in rank}
+    print(f"# {len(defs)} acronyms; {counts['error']} error(s), {counts['warn']} warning(s), "
+          f"{counts['info']} info", file=sys.stderr)
+    if counts["error"]:
+        return 1
+    if counts["warn"]:
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)
